@@ -191,3 +191,6 @@ select, input { font: inherit; color: var(--ink); background: var(--surface); bo
 @media (forced-colors: active) {
   .bar, .fill { forced-color-adjust: none; }
 }
+
+.insights { display: grid; gap: 10px; }
+.insight { margin: 0; padding: 10px 12px; border-radius: 8px; background: var(--surface-2, rgba(127,127,127,.08)); line-height: 1.45; }

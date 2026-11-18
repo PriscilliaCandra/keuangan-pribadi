@@ -235,6 +235,12 @@
     fill($("#debts-by-me"), x.by_me, "Tidak ada.");
   }
 
+  function renderInsights(d) {
+    const host = $("#insights");
+    host.replaceChildren(...d.insights.map((t) => h("p", { class: "insight", text: t })));
+    $("#insight-card").hidden = !d.insights.length;
+  }
+
   function renderRecurring(d) {
     const host = $("#recurring");
     host.replaceChildren();
@@ -344,6 +350,7 @@
     renderGoals(d);
     renderDebts(d);
     renderRecurring(d);
+    renderInsights(d);
     syncFilters();
   }
 

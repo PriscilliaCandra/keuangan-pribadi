@@ -72,6 +72,12 @@ tetapi **tidak punya perintah untuk membaca catatan pengguna**. Lihat [docs/DEPL
 - `/ekspor` mengirim CSV transaksi (bulan ini / `2026-10`); `/ekspor semua` mengirim **ZIP berisi seluruh datamu**
   (transaksi, anggaran, tagihan, target + setoran, utang + pembayaran, catatan rutin, pengaturan).
 
+**Insight otomatis**
+- `/insight` (dan tiap Minggu bersama ringkasan, serta kartu di dashboard) menampilkan maksimal 4 temuan dari
+  kebiasaanmu: kategori yang naik/turun dibanding periode yang sama bulan lalu, pengeluaran kecil yang berulang
+  (mis. kopi 8x = Rp… ≈ Rp… setahun), akhir pekan lebih boros, proyeksi akhir bulan, dan peringatan defisit.
+- Murni aturan dan angka dari datamu sendiri (tanpa AI), jadi tidak mengarang dan tidak memakai kuota AI.
+
 **Catatan rutin & pengingat malam**
 - `kos 1,5jt tiap bulan tgl 1` atau `/rutin gaji 8jt tgl 25 masuk` → dicatat otomatis tiap bulan
   (tanggal 31 jatuh di hari terakhir bulan pendek). `/rutin` melihat daftar; `/rutin jeda|lanjut|hapus <nama>`.
@@ -97,6 +103,7 @@ tetapi **tidak punya perintah untuk membaca catatan pengguna**. Lihat [docs/DEPL
 | teks bebas / foto struk | catat pengeluaran |
 | `gaji 8jt` · `+500rb freelance` · `/masuk …` | catat pemasukan |
 | `/saldo` | arus kas bulan ini |
+| `/insight` | temuan otomatis dari kebiasaan belanja |
 | `/gajian 25` · `/aman` | atur tanggal gajian · uang aman per hari sampai gajian |
 | `/utang` · `/utang Siti 30rb` · `/piutang Budi 50rb makan siang` | daftar · aku berutang · orang berutang padaku |
 | `/lunas Budi [20rb]` · `/tagih Budi` · `/patungan makan 240rb dengan Budi, Siti` | pelunasan · draf tagihan · patungan |

@@ -13,6 +13,7 @@ from typing import Any, Callable
 from . import bills as bills_mod
 from . import agent, budget, email_scan, ledger, reports
 from . import export as export_mod
+from . import insights as insights_mod
 from . import routines as routines_mod
 from . import debts as debts_mod
 from . import plans as plans_mod
@@ -41,6 +42,7 @@ HELP = """Halo! Aku pencatat keuanganmu.
 🤖 /tanya berapa pengeluaran kopi bulan ini? (atau ketik pertanyaannya langsung)
 📈 /dashboard — grafik pemasukan & pengeluaran (tautan masuk sekali pakai)
 
+💡 /insight — temuan dari kebiasaan belanjamu (juga dikirim tiap Minggu)
 🧮 /aman — uang aman per hari sampai gajian (atur tanggal gajian: /gajian 25)
 🎯 /target liburan bali 5jt sampai 2027-03 · "nabung 500rb liburan" · /tarik liburan 200rb
 💸 Utang-piutang: "Budi utang 50rb makan siang" · "utang ke Siti 30rb" · "Budi bayar 20rb" · /utang · /lunas Budi · /tagih Budi
@@ -374,7 +376,12 @@ class Service:
         return "\n\n".join(parts)
 
     def weekly_job(self, chat_id: int) -> str:
-        return self.summary_command(chat_id, "minggu")
+        summary = self.summary_command(chat_id, "minggu")
+        items = insights_mod.build_insights(self.db, chat_id, self.clock())
+        return summary + ("\n\n" + insights_mod.format_insights(items) if items else "")
+
+    def insight_command(self, chat_id: int, args: str = "") -> str:
+        return insights_mod.format_insights(insights_mod.build_insights(self.db, chat_id, self.clock()))
 
     # ---------- perencanaan: gajian, uang aman, target tabungan ----------
     MAX_GOALS = 20
