@@ -189,7 +189,48 @@
         h("div", { class: "row" }, h("span", { text: b.name }), h("span", { class: "amt", text: `${rp(b.spent)} / ${rp(b.limit)}` })),
         h("div", { class: "track", role: "progressbar", "aria-valuemin": "0", "aria-valuemax": "100",
           "aria-valuenow": String(Math.min(100, b.pct)), "aria-label": `${b.name}: ${state_}` }, fill),
-        h("div", { class: "state", text: state_ })));
+        h("div", { class: "state", text: state_ + (b.forecast ? ` · prediksi habis ${fmtDate(b.forecast)}` : "") })));
+    }
+  }
+
+  function renderSafe(d) {
+    const host = $("#safe");
+    host.replaceChildren();
+    const s = d.safe_daily;
+    if (!s) {
+      host.append(h("div", { class: "empty", text: "Catat pemasukan atau atur anggaran total (/anggaran total 5jt) di Telegram untuk melihat uang aman per hari." }));
+      return;
+    }
+    const over = s.available <= 0;
+    host.append(
+      h("div", { class: "safe-value", text: over ? rp(s.available) : `${rp(s.per_day)}` }),
+      h("div", { class: "label", text: over ? "Sudah melewati batas sampai gajian" : `per hari selama ${s.days_left} hari, sampai ${fmtDate(s.next_payday)}` }),
+      h("div", { class: "safe-lines" },
+        h("div", { text: `Sisa uang: ${rp(s.available)}` }),
+        s.upcoming_bills ? h("div", { text: `Sudah dikurangi tagihan sebelum gajian: ${rp(s.upcoming_bills)}` }) : null,
+        s.saved ? h("div", { text: `Sudah dikurangi setoran tabungan siklus ini: ${rp(s.saved)}` }) : null,
+        s.avg7 ? h("div", { class: over ? "" : (s.over_pace ? "down-bad" : "up-good"),
+          text: over ? `Rata-rata 7 harimu: ${rp(s.avg7)}/hari`
+            : `${s.over_pace ? "▲ Di atas batas" : "✓ Dalam batas"}: rata-rata 7 harimu ${rp(s.avg7)}/hari` }) : null,
+        s.depletion ? h("div", { class: "down-bad", text: `▼ Dengan laju ini uang habis sekitar ${fmtDate(s.depletion)}` }) : null,
+        s.payday_is_default ? h("div", { class: "muted", text: "Tanggal gajian belum diatur (dipakai tanggal 1): /gajian 25" }) : null));
+  }
+
+  function renderGoals(d) {
+    const host = $("#goals");
+    host.replaceChildren();
+    if (!d.goals.length) { host.append(h("div", { class: "empty", text: "Belum ada target. Buat di Telegram: /target liburan bali 5jt" })); return; }
+    for (const g of d.goals) {
+      const fill = h("span", { class: "fill ok" });
+      fill.style.width = `${g.pct}%`;
+      const note = g.pct >= 100 ? "✓ Target tercapai"
+        : g.monthly ? `Tabung ≈ ${rp(g.monthly)} per bulan sampai ${fmtDate(g.deadline, true)}`
+        : g.deadline ? `Tenggat ${fmtDate(g.deadline, true)}` : `Sisa ${rp(g.target - g.saved)}`;
+      host.append(h("div", { class: "meter" },
+        h("div", { class: "row" }, h("span", { text: g.name }), h("span", { class: "amt", text: `${rp(g.saved)} / ${rp(g.target)}` })),
+        h("div", { class: "track", role: "progressbar", "aria-valuemin": "0", "aria-valuemax": "100",
+          "aria-valuenow": String(g.pct), "aria-label": `${g.name}: ${g.pct}%` }, fill),
+        h("div", { class: "state", text: `${g.pct}% · ${note}` })));
     }
   }
 
@@ -268,6 +309,8 @@
     renderRanks($("#inc-cats"), d.income_by_category, "income", "masuk");
     renderBudgets(d);
     renderBills(d);
+    renderSafe(d);
+    renderGoals(d);
     syncFilters();
   }
 

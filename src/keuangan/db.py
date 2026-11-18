@@ -114,11 +114,39 @@ CREATE TABLE IF NOT EXISTS sessions (
   expires_at TEXT NOT NULL,
   created_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS user_settings (
+  chat_id INTEGER PRIMARY KEY,
+  payday INTEGER CHECK (payday BETWEEN 1 AND 31)
+);
+
+CREATE TABLE IF NOT EXISTS goals (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  chat_id INTEGER NOT NULL,
+  name TEXT NOT NULL,
+  name_key TEXT NOT NULL,
+  target INTEGER NOT NULL CHECK (target > 0),
+  deadline TEXT,
+  created_on TEXT NOT NULL,
+  UNIQUE (chat_id, name_key)
+);
+
+CREATE TABLE IF NOT EXISTS goal_deposits (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  goal_id INTEGER NOT NULL,
+  chat_id INTEGER NOT NULL,
+  amount INTEGER NOT NULL CHECK (amount != 0),
+  on_date TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_goal_deposits_chat_date ON goal_deposits(chat_id, on_date);
 """
 
 # Tabel yang berisi data milik pengguna (kunci chat_id): dihapus saat pengguna minta hapus akun.
+# Pengecualian disengaja: `ai_usage` (hanya chat_id + tanggal + hitungan, tanpa isi) disimpan sampai
+# 7 hari agar kuota AI harian tak bisa direset dengan hapus-akun lalu daftar ulang; lihat privacy.py.
 USER_DATA_TABLES = ("expenses", "incomes", "budgets", "budget_alerts", "bills",
-                    "processed_emails", "ai_usage", "login_tokens", "sessions", "users")
+                    "goal_deposits", "goals", "user_settings",
+                    "processed_emails", "login_tokens", "sessions", "users")
 
 
 @dataclass
@@ -353,6 +381,15 @@ class Database:
         rows = sorted([*ex, *inc], key=lambda r: (r["created_at"], r["id"]), reverse=True)[:limit]
         return [("keluar", self._expense(r)) if r["kind"] == "keluar" else ("masuk", self._income(r))
                 for r in rows]
+
+    def count_entries_since(self, days: int) -> int:
+        """Jumlah catatan (pengeluaran + pemasukan, semua pengguna) dibuat dalam `days` hari terakhir.
+        Hanya hitungan agregat untuk statistik admin; tidak membuka isi."""
+        cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S.%f")
+        total = 0
+        for table in ("expenses", "incomes"):  # nama tabel dari konstanta
+            total += self.query(f"SELECT COUNT(*) AS n FROM {table} WHERE created_at >= ?", (cutoff,))[0]["n"]
+        return total
 
     def delete_latest_entry(self, chat_id: int) -> tuple[str, Expense | Income] | None:
         recent = self.recent_entries(chat_id, 1)

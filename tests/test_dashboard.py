@@ -85,7 +85,8 @@ def test_period_comparison(seeded):
 
 def test_budgets_bills_and_top_expenses(seeded):
     s = build_summary(seeded, CHAT, "bulan_ini", TODAY)
-    assert s["budgets"] == [{"name": "Makanan & Minuman", "spent": 145_000, "limit": 200_000, "pct": 72}]
+    assert s["budgets"] == [{"name": "Makanan & Minuman", "spent": 145_000, "limit": 200_000, "pct": 72,
+                             "forecast": "2026-11-23"}]  # laju 8.500/hari: anggaran habis 23 Nov
     assert s["bills"]["items"][0]["name"] == "Netflix" and s["bills"]["items"][0]["days_left"] == 3
     assert s["bills"]["monthly_total"] == 54_000
     assert [t["note"] for t in s["top_expenses"]][:2] == ["sepatu", "makan malam"]
@@ -127,3 +128,33 @@ def test_transactions_clamp_and_validate(seeded):
 def test_transactions_per_chat(seeded):
     notes = {x["note"] for x in list_transactions(seeded, CHAT, "semua", TODAY, limit=100)["rows"]}
     assert "milik orang lain" not in notes and "gaji orang lain" not in notes
+
+
+# ---------- uang aman & target tabungan ----------
+def test_summary_includes_safe_daily_goals_and_budget_forecast(seeded):
+    from keuangan.plans import PlanStore
+    plans = PlanStore(seeded)
+    plans.set_payday(CHAT, 25)
+    g, _ = plans.create_goal(CHAT, "liburan", 5_000_000, date(2027, 3, 31), TODAY)
+    plans.deposit(CHAT, g, 1_000_000, TODAY)
+    s = build_summary(seeded, CHAT, "bulan_ini", TODAY)
+    safe = s["safe_daily"]
+    assert safe["mode"] == "pemasukan" and safe["days_left"] == 8 and safe["next_payday"] == "2026-11-25"
+    # pemasukan 9.500.000 - pengeluaran siklus 735.000 (sejak 25 Okt) - Netflix 54.000 (jatuh tempo 20 Nov)
+    # - tabungan 1.000.000
+    assert safe["available"] == 7_711_000 and safe["per_day"] == 7_711_000 // 8 and safe["upcoming_bills"] == 54_000
+    assert s["goals"] == [{"name": "liburan", "saved": 1_000_000, "target": 5_000_000, "pct": 20,
+                           "deadline": "2027-03-31", "monthly": 1_000_000}]
+    assert s["budgets"][0]["forecast"] == "2026-11-23"
+
+
+def test_summary_without_basis_or_goals_is_null_safe(db):
+    s = build_summary(db, CHAT, "bulan_ini", TODAY)
+    assert s["safe_daily"] is None and s["goals"] == []
+
+
+def test_summary_safe_daily_and_goals_are_per_user(seeded):
+    from keuangan.plans import PlanStore
+    PlanStore(seeded).create_goal(2, "rahasia siti", 1_000_000, None, TODAY)
+    assert build_summary(seeded, CHAT, "bulan_ini", TODAY)["goals"] == []
+    assert build_summary(seeded, 2, "bulan_ini", TODAY)["goals"][0]["name"] == "rahasia siti"

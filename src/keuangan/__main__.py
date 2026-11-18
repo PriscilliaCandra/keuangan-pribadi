@@ -57,14 +57,17 @@ def main() -> int:
         if cfg.email_enabled else None
     )
     access = AccessControl(db, cfg.admin_chat_ids, cfg.ai_privacy_note, cfg.ai_daily_limit,
-                           cfg.ai_max_concurrent, cfg.ai_wait_seconds, clock)
+                           cfg.ai_max_concurrent, cfg.ai_wait_seconds, clock,
+                           registration=cfg.registration_mode, max_users=cfg.max_users,
+                           signups_per_hour=cfg.signups_per_hour)
     svc = Service(db, llm, clock, cfg.reminder_days, fetcher, access)
     svc.dashboard_base_url = start_dashboard(cfg, db, access, clock)
 
     logging.getLogger(__name__).info(
-        "Siap. AI=%s, scan email=%s, admin=%d, dashboard=%s, kuota AI=%d/hari",
+        "Siap. AI=%s, scan email=%s, admin=%d, dashboard=%s, kuota AI=%d/hari, pendaftaran=%s (maks %d)",
         cfg.llm_label, "on" if fetcher else "off", len(cfg.admin_chat_ids),
         "on" if svc.dashboard_base_url else "off", cfg.ai_daily_limit,
+        cfg.registration_mode, cfg.max_users,
     )
     # bootstrap_retries=-1: kalau internet putus saat start, coba lagi terus (bukan langsung mati)
     build_app(cfg, svc).run_polling(bootstrap_retries=-1)

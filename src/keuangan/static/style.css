@@ -178,6 +178,10 @@ select, input { font: inherit; color: var(--ink); background: var(--surface); bo
   .seg button, .btn, .icon-btn { padding: 5px 9px; font-size: 14px; }
   .card, .hero, .tile { padding-left: 12px; padding-right: 12px; }
 }
+.safe-value { font-size: 36px; font-weight: 650; line-height: 1.15; margin-top: 2px; }
+.safe-lines { display: grid; gap: 4px; margin-top: 12px; font-size: 14px; color: var(--ink-2); }
+.safe-lines .up-good { color: var(--ok); }
+.safe-lines .down-bad { color: var(--crit); }
 .login { display: grid; place-items: center; min-height: 80vh; }
 .login-card { max-width: 380px; width: 100%; text-align: center; padding: 28px 24px; }
 .login-msg { color: var(--ink-2); margin: 12px 0 16px; }

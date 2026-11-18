@@ -337,3 +337,19 @@ def test_login_page_strips_the_token_from_the_address_bar():
     js = read("login.js")
     assert "history.replaceState" in js and "/api/login" in js
     assert "?t=" not in js or "location.search" in js        # token hanya dibaca dari URL, tak ditulis ke mana pun
+
+
+def test_huge_body_is_refused_without_processing(client, acc):
+    """Unggahan besar ditolak: klien menerima 413, atau koneksinya diputus (keduanya penolakan sah)."""
+    try:
+        r = client.post("/api/login", content=b"x" * 200_000, headers={"Content-Type": "application/json"})
+        assert r.status_code in (413, 400)
+    except httpx.TransportError:
+        pass
+    # server tetap sehat setelahnya
+    with client_for_url(client) as c2:
+        assert c2.get("/login.js").status_code == 200
+
+
+def client_for_url(client):
+    return httpx.Client(base_url=str(client.base_url), follow_redirects=False)

@@ -248,3 +248,46 @@ def test_build_app_registers_new_commands(db, svc):
     assert {"daftar", "setuju", "privasi", "hapus_akun", "undang", "pengguna", "blokir", "aktifkan",
             "statistik"} <= commands
     assert {j.name for j in app.job_queue.jobs()} >= {"harian", "mingguan", "cadangan"}
+
+
+# ---------- pendaftaran terbuka lewat bot ----------
+@pytest.fixture
+def open_svc(db):
+    access = AccessControl(db, frozenset({ADMIN}), ai_daily_limit=5, ai_wait_seconds=0.2,
+                           clock=lambda: TODAY, registration="open", max_users=10, signups_per_hour=10)
+    return Service(db, None, clock=lambda: TODAY, access=access)
+
+
+def test_open_mode_start_registers_directly_and_full_flow_works(open_svc, db):
+    u = update(BUDI)
+    run(bot.cmd_start(u, context(open_svc)))                    # /start saja, tanpa kode
+    assert "Privasi" in replies(u)[0]
+    u = update(BUDI, "kopi 25rb")
+    run(bot.on_text(u, context(open_svc)))                      # belum setuju: belum bisa mencatat
+    assert "/setuju" in replies(u)[0] and db.query("SELECT 1 FROM expenses") == []
+    run(bot.cmd_setuju(update(BUDI), context(open_svc)))
+    u = update(BUDI, "kopi 25rb")
+    run(bot.on_text(u, context(open_svc)))
+    assert "Dicatat" in replies(u)[0]
+
+
+def test_open_mode_unregistered_text_message_points_to_daftar(open_svc, db):
+    u = update(SITI, "kopi 25rb")
+    run(bot.on_text(u, context(open_svc)))
+    assert "/daftar" in replies(u)[0] and db.query("SELECT 1 FROM expenses") == []
+
+
+def test_open_mode_users_stay_isolated(open_svc, db):
+    for chat, name in ((BUDI, "Budi"), (SITI, "Siti")):
+        run(bot.cmd_daftar(update(chat, name=name), context(open_svc)))
+        run(bot.cmd_setuju(update(chat, name=name), context(open_svc)))
+    run(bot.on_text(update(BUDI, "kopi rahasia 25rb"), context(open_svc)))
+    u = update(SITI)
+    run(bot._command("history_command")(u, context(open_svc)))
+    assert "rahasia" not in replies(u)[0]
+
+
+def test_invite_mode_start_without_code_does_not_register(svc):
+    u = update(BUDI)
+    run(bot.cmd_start(u, context(svc)))
+    assert "beta tertutup" in replies(u)[0] and svc.access.accounts.get_user(BUDI) is None

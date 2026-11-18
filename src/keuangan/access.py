@@ -30,7 +30,10 @@ class AccessControl:
     def __init__(self, db: Database, admin_ids: frozenset[int] = frozenset(),
                  ai_note: str = "AI tidak aktif.", ai_daily_limit: int = 30,
                  ai_max_concurrent: int = 2, ai_wait_seconds: float = 90,
-                 clock: Callable[[], date] = date.today, accounts: AccountStore | None = None):
+                 clock: Callable[[], date] = date.today, accounts: AccountStore | None = None,
+                 registration: str = "invite", max_users: int = 100, signups_per_hour: int = 20):
+        if registration not in ("invite", "open"):
+            raise ValueError("registration harus 'invite' atau 'open'")
         self.db = db
         self.admin_ids = admin_ids
         self.accounts = accounts or AccountStore(db)
@@ -38,9 +41,17 @@ class AccessControl:
         self.ai_daily_limit = ai_daily_limit
         self.ai_wait_seconds = ai_wait_seconds
         self.clock = clock
+        self.registration = registration
+        self.max_users = max_users
         self.bot_username: str | None = None  # diisi bot saat start, untuk tautan undangan
         self._ai_sem = threading.BoundedSemaphore(max(1, ai_max_concurrent))
         self._code_limiter = RateLimiter(max_events=5, window_s=900)  # 5 tebakan kode / 15 menit
+        self._signup_limiter = RateLimiter(max_events=signups_per_hour, window_s=3600)
+
+    @property
+    def open_registration(self) -> bool:
+        """True: siapa pun bisa membuat akun sendiri (tanpa kode undangan)."""
+        return self.registration == "open"
 
     # ---------- status akses ----------
     def is_admin(self, chat_id: int) -> bool:
@@ -66,6 +77,9 @@ class AccessControl:
             return "Akses akunmu dinonaktifkan. Hubungi pemilik bot bila ini keliru."
         hint = ("" if self.admin_ids else
                 f"\n\n(Setup awal: Chat ID kamu {chat_id}. Isi ADMIN_CHAT_IDS di .env lalu restart.)")
+        if self.open_registration:
+            return ("Halo! Aku pencatat keuangan pribadi (beta, gratis). Setiap orang punya akun sendiri "
+                    "dan datanya terpisah dari pengguna lain.\nKetik /daftar untuk membuat akunmu." + hint)
         return ("Bot ini sedang beta tertutup. Kalau kamu punya kode undangan, kirim:\n"
                 "/daftar KODE-UNDANGAN" + hint)
 
@@ -90,6 +104,8 @@ class AccessControl:
             return "Akses akunmu dinonaktifkan. Hubungi pemilik bot bila ini keliru."
         if user and user.status == "pending":
             return privacy.summary(self.ai_note)
+        if self.open_registration:
+            return self._register_open(chat_id, name)
         if self._code_limiter.blocked(chat_id):
             minutes = self._code_limiter.retry_after(chat_id) // 60 + 1
             return f"Terlalu banyak percobaan kode. Coba lagi sekitar {minutes} menit."
@@ -101,6 +117,17 @@ class AccessControl:
             return "Kode tidak valid, sudah kedaluwarsa, atau sudah terpakai."
         self._code_limiter.reset(chat_id)
         self.accounts.create_pending(chat_id, name, code)
+        return privacy.summary(self.ai_note)
+
+    def _register_open(self, chat_id: int, name: str) -> str:
+        """Pendaftaran mandiri. Dua pagar melindungi server: batas total pengguna dan batas
+        laju pendaftaran baru per jam (mencegah banjir akun)."""
+        if self.accounts.count_users() >= self.max_users:
+            return "Maaf, kapasitas beta sedang penuh. Coba lagi nanti ya."
+        if self._signup_limiter.blocked("signup"):
+            return "Pendaftaran sedang ramai. Coba lagi dalam beberapa menit."
+        self._signup_limiter.record("signup")
+        self.accounts.create_pending(chat_id, name, None)
         return privacy.summary(self.ai_note)
 
     def consent(self, chat_id: int) -> str:
@@ -172,8 +199,14 @@ class AccessControl:
         if (denied := self._admin_only(chat_id)):
             return denied
         c = self.accounts.counts()
+        entries = self.db.count_entries_since(7)
+        active7 = self.accounts.active_since(7)
+        per_user = f", rata-rata {entries / active7:.1f} per pengguna aktif" if active7 else ""
+        mode = "terbuka (siapa pun bisa daftar)" if self.open_registration else "kode undangan"
         return (f"📊 Pengguna: {c['active']} aktif · {c['pending']} menunggu setuju · {c['blocked']} diblokir\n"
+                f"Pendaftaran: {mode} · kapasitas {self.accounts.count_users()}/{self.max_users}\n"
                 f"Kode undangan aktif: {len(self.accounts.active_invites())}\n"
+                f"Aktivitas 7 hari: {active7} pengguna aktif · {entries} catatan{per_user}\n"
                 f"Batas AI per pengguna/hari: {self.ai_daily_limit}")
 
     # ---------- hapus akun (hak hapus data) ----------

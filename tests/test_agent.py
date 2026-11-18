@@ -175,7 +175,8 @@ def test_system_prompt_has_date_and_rules():
 
 def test_tool_specs_are_read_only_and_well_formed():
     names = {t["name"] for t in agent.TOOL_SPECS}
-    assert names == {"cari_transaksi", "arus_kas", "status_anggaran", "daftar_tagihan"}
+    assert names == {"cari_transaksi", "arus_kas", "status_anggaran", "daftar_tagihan",
+                     "uang_aman_harian", "target_tabungan"}
     for t in agent.TOOL_SPECS:
         assert t["parameters"]["type"] == "object" and t["description"]
     assert "chat_id" not in json.dumps(agent.TOOL_SPECS)  # model tak bisa memilih pengguna
@@ -357,3 +358,40 @@ def test_income_categories_in_agent(db):
     # nama kategori yang salah ditaruh di kata_kunci tetap dianggap kategori
     assert t.run("cari_transaksi", {"jenis": "pemasukan", "kata_kunci": "gaji"})["total"] == 8_000_000
     assert t.run("cari_transaksi", {"jenis": "pemasukan", "batas": 1})["rincian"][0]["kategori"] == "Gaji"
+
+
+# ---------- uang aman, target tabungan, prediksi ----------
+def test_agent_safe_daily_and_goals_tools(db):
+    from keuangan.plans import PlanStore
+    plans = PlanStore(db)
+    t = agent.QueryTools(db, CHAT, TODAY)
+    assert "Belum ada dasar" in t.run("uang_aman_harian", {})["catatan"]
+    assert t.run("target_tabungan", {})["target"] == []
+    plans.set_payday(CHAT, 25)
+    db.add_income(CHAT, 8_000_000, "gaji", date(2026, 10, 25))
+    db.add_expense(CHAT, 700_000, "x", "Belanja", TODAY - timedelta(days=2))
+    g, _ = plans.create_goal(CHAT, "liburan", 5_000_000, date(2027, 3, 31), TODAY)
+    plans.deposit(CHAT, g, 1_000_000, TODAY)
+    s = t.run("uang_aman_harian", {})
+    assert s["sisa_uang_rp"] == "Rp6.300.000" and s["hari_sampai_gajian"] == 8
+    assert s["aman_per_hari_rp"] == "Rp787.500" and s["gajian_berikutnya"] == "2026-11-25"
+    goal = t.run("target_tabungan", {})["target"][0]
+    assert goal["nama"] == "liburan" and goal["persen"] == 20 and goal["setoran_per_bulan_rp"] == "Rp1.000.000"
+
+
+def test_agent_budget_tool_includes_forecast(db):
+    db.set_budget(CHAT, "Makanan & Minuman", 200_000)
+    db.add_expense(CHAT, 145_000, "x", "Makanan & Minuman", TODAY)
+    item = agent.QueryTools(db, CHAT, TODAY).run("status_anggaran", {})["anggaran"][0]
+    assert item["prediksi_habis"] == "2026-11-23"
+
+
+def test_new_agent_tools_are_per_user_and_reject_arguments(db):
+    from keuangan.plans import PlanStore
+    PlanStore(db).create_goal(2, "rahasia", 1_000_000, None, TODAY)
+    db.add_income(2, 9_000_000, "gaji", TODAY)
+    t = agent.QueryTools(db, CHAT, TODAY)
+    assert t.run("target_tabungan", {})["target"] == []
+    assert "Belum ada dasar" in t.run("uang_aman_harian", {})["catatan"]
+    assert "error" in t.run("uang_aman_harian", {"chat_id": 2})
+    assert "error" in t.run("target_tabungan", {"nama": "rahasia"})

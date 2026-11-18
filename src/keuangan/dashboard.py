@@ -7,6 +7,7 @@ from typing import Any
 
 from . import bills as bills_mod
 from . import budget
+from . import plans as plans_mod
 from .agent import resolve_period
 from .categories import CATEGORIES, INCOME_CATEGORIES
 from .db import Database
@@ -84,8 +85,15 @@ def build_summary(db: Database, chat_id: int, period: str, today: date) -> dict[
     granularity, series = _series(expenses, incomes, start, end)
     last_day = end - timedelta(days=1)
 
-    budgets = [{"name": budget.label(s.category), "spent": s.spent, "limit": s.limit, "pct": s.pct}
+    predicted = {f.name: f.depletion.isoformat() for f in plans_mod.budget_forecasts(db, chat_id, today)}
+    budgets = [{"name": budget.label(s.category), "spent": s.spent, "limit": s.limit, "pct": s.pct,
+                "forecast": predicted.get(budget.label(s.category))}
                for s in budget.statuses(db, chat_id, today)]
+    plans = plans_mod.PlanStore(db)
+    safe = plans_mod.safe_daily(db, plans, chat_id, today)
+    goals = [{"name": g.name, "saved": g.saved, "target": g.target, "pct": g.pct,
+              "deadline": g.deadline.isoformat() if g.deadline else None,
+              "monthly": plans_mod.monthly_suggestion(g, today)} for g in plans.list_goals(chat_id)]
     bill_rows = []
     active_bills = db.list_bills(chat_id)
     for b in sorted(active_bills, key=lambda x: bills_mod.next_due(x, today)):
@@ -111,6 +119,14 @@ def build_summary(db: Database, chat_id: int, period: str, today: date) -> dict[
                           "category": e.category, "note": e.description}
                          for e in sorted(expenses, key=lambda x: -x.amount)[:5]],
         "budgets": budgets,
+        "safe_daily": None if safe is None else {
+            "mode": safe.mode, "per_day": safe.per_day, "available": safe.available,
+            "days_left": safe.days_left, "next_payday": safe.next_payday.isoformat(),
+            "avg7": safe.avg7, "over_pace": safe.over_pace and safe.available > 0,
+            "depletion": safe.depletion.isoformat() if safe.depletion else None,
+            "payday_is_default": safe.payday_is_default, "upcoming_bills": safe.upcoming_bills,
+            "saved": safe.saved},
+        "goals": goals,
         "bills": {"items": bill_rows,
                   "monthly_total": sum(bills_mod.monthly_cost(b) for b in active_bills)},
         "categories": {"expense": CATEGORIES, "income": INCOME_CATEGORIES},

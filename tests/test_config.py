@@ -63,3 +63,17 @@ def test_dashboard_defaults_and_overrides():
 def test_dashboard_port_validation(value):
     with pytest.raises(ConfigError):
         load_config({"TELEGRAM_BOT_TOKEN": "t", "DASHBOARD_PORT": value})
+
+
+def test_registration_mode_and_limits():
+    base = {"TELEGRAM_BOT_TOKEN": "t"}
+    cfg = load_config(base)
+    assert (cfg.registration_mode, cfg.max_users, cfg.signups_per_hour) == ("invite", 100, 20)
+    cfg = load_config({**base, "REGISTRATION": "OPEN", "MAX_USERS": "50", "SIGNUPS_PER_HOUR": "5"})
+    assert (cfg.registration_mode, cfg.max_users, cfg.signups_per_hour) == ("open", 50, 5)
+
+
+@pytest.mark.parametrize("env", [{"REGISTRATION": "bebas"}, {"MAX_USERS": "0"}, {"SIGNUPS_PER_HOUR": "abc"}])
+def test_registration_misconfig(env):
+    with pytest.raises(ConfigError):
+        load_config({"TELEGRAM_BOT_TOKEN": "t", **env})

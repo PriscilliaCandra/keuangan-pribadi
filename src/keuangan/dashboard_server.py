@@ -41,7 +41,8 @@ PRIVATE_FILES = {  # butuh sesi
     "/app.js": ("app.js", "text/javascript; charset=utf-8"),
 }
 COOKIE = "kp_session"
-MAX_BODY = 2048
+MAX_BODY = 2048          # batas isi yang diproses
+MAX_DRAIN = 64 * 1024    # sampai ini dibaca-dan-dibuang agar balasan 400 sampai ke klien
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -157,7 +158,14 @@ class _Handler(BaseHTTPRequestHandler):
             length = int(self.headers.get("Content-Length", "0"))
         except ValueError:
             length = -1
-        raw = self.rfile.read(length) if 0 <= length <= MAX_BODY else None
+        raw: bytes | None = None
+        if 0 <= length <= MAX_BODY:
+            raw = self.rfile.read(length)
+        elif MAX_BODY < length <= MAX_DRAIN:
+            self.rfile.read(length)  # dibuang: terlalu besar untuk diproses, tapi jangan putus paksa
+        elif length > MAX_DRAIN:
+            self._json(413, {"error": "badan permintaan terlalu besar"})
+            return
 
         if not self._host_ok():
             self._json(403, {"error": "host tidak diizinkan"})

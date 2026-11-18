@@ -33,14 +33,22 @@ def _to_number(raw: str) -> float:
     return float(raw.replace(",", "."))
 
 
+# Bahasa sehari-hari untuk uang. "2 goceng" = 10 ribu.
+_SLANG = {"seceng": 1_000, "seribu": 1_000, "goceng": 5_000, "ceban": 10_000, "noban": 20_000,
+          "gocap": 50_000, "cepek": 100_000, "sejuta": 1_000_000}
+_SLANG_RE = re.compile(r"(?<!\w)(?:(\d{1,3})\s*)?(" + "|".join(_SLANG) + r")(?![a-z\d])", re.I)
+
+
 def find_amount(text: str) -> tuple[int, tuple[int, int]] | None:
     """Cari nominal rupiah. Mengembalikan (nilai, (awal, akhir)) atau None.
 
-    Prioritas: angka bertanda (Rp / rb / k / jt) paling akhir, lalu angka >= 1000.
+    Prioritas: angka bertanda (Rp / rb / k / jt / goceng / ceban ...) paling akhir, lalu angka >= 1000.
     Angka kecil tanpa penanda ("2 kopi") sengaja diabaikan.
     """
     marked: list[tuple[int, tuple[int, int]]] = []
     plain: list[tuple[int, tuple[int, int]]] = []
+    for m in _SLANG_RE.finditer(text):
+        marked.append((int(m.group(1) or 1) * _SLANG[m.group(2).lower()], m.span()))
     for m in _NUM.finditer(text):
         rp, raw, unit = m.group(1), m.group(2), m.group(3)
         value = _to_number(raw)
@@ -54,7 +62,7 @@ def find_amount(text: str) -> tuple[int, tuple[int, int]] | None:
         elif amount >= 1000:
             plain.append((amount, m.span()))
     if marked:
-        return marked[-1]
+        return max(marked, key=lambda c: c[1][0])  # yang paling akhir dalam kalimat
     if plain:
         return plain[-1]
     return None

@@ -22,6 +22,9 @@ class Config:
     ollama_host: str
     ollama_model: str | None
     ollama_vision_model: str | None
+    registration_mode: str       # "invite" (kode undangan) | "open" (siapa pun bisa daftar)
+    max_users: int               # batas total pengguna biasa
+    signups_per_hour: int        # batas pendaftaran baru per jam (mode terbuka)
     ai_daily_limit: int          # panggilan AI per pengguna per hari (admin bebas)
     ai_max_concurrent: int       # berapa permintaan AI berjalan bersamaan
     ai_wait_seconds: int         # lama menunggu giliran AI sebelum menyerah
@@ -124,6 +127,13 @@ def _choose_provider(explicit: str, api_key: str | None, ollama_model: str | Non
     raise ConfigError(f"LLM_PROVIDER tidak dikenal: {explicit!r} (pilih anthropic / ollama / none).")
 
 
+def _registration(raw: str) -> str:
+    mode = raw.strip().lower() or "invite"
+    if mode not in ("invite", "open"):
+        raise ConfigError(f"REGISTRATION tidak dikenal: {raw!r} (pilih invite / open)")
+    return mode
+
+
 def _public_url(raw: str) -> str | None:
     raw = raw.strip()
     if not raw:
@@ -157,6 +167,9 @@ def load_config(env: Mapping[str, str] | None = None) -> Config:
         ollama_host=env.get("OLLAMA_HOST", "").strip() or "http://localhost:11434",
         ollama_model=ollama_model,
         ollama_vision_model=env.get("OLLAMA_VISION_MODEL", "").strip() or None,
+        registration_mode=_registration(env.get("REGISTRATION", "")),
+        max_users=_int(env, "MAX_USERS", 100, 1, 1_000_000),
+        signups_per_hour=_int(env, "SIGNUPS_PER_HOUR", 20, 1, 100_000),
         ai_daily_limit=_int(env, "AI_DAILY_LIMIT", 30, 1, 100_000),
         # Ollama memproses satu per satu; API cloud boleh paralel.
         ai_max_concurrent=_int(env, "AI_MAX_CONCURRENT", 1 if provider == "ollama" else 4, 1, 64),

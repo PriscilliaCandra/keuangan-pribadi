@@ -79,7 +79,8 @@ async def cmd_start(update: Update, context: Ctx) -> None:
     state = await asyncio.to_thread(svc.access.state, chat.id, _name(update))
     if state == "ok":
         await _reply(update, svc.help_text(chat.id))
-    elif state == "unregistered" and context.args:  # tautan undangan: t.me/bot?start=KODE
+    elif state == "unregistered" and (context.args or svc.access.open_registration):
+        # tautan undangan t.me/bot?start=KODE, atau pendaftaran terbuka: /start langsung mendaftar
         await _reply(update, await asyncio.to_thread(
             svc.access.register, chat.id, _name(update), _args(context)))
     else:
@@ -245,11 +246,13 @@ async def job_email(context: Ctx) -> None:
 
 async def job_backup(context: Ctx) -> None:
     cfg = _cfg(context)
+    svc = _svc(context)
     try:
-        path = await asyncio.to_thread(run_backup, _svc(context).db, cfg.backup_dir, cfg.backup_keep)
+        path = await asyncio.to_thread(run_backup, svc.db, cfg.backup_dir, cfg.backup_keep)
         log.info("Cadangan database: %s", path)
     except OSError as exc:
         log.error("Cadangan database GAGAL: %s", exc)
+    await asyncio.to_thread(svc.access.accounts.purge_expired)  # sesi/token/hitungan AI kedaluwarsa
 
 
 async def on_error(update: object, context: Ctx) -> None:
@@ -292,6 +295,11 @@ def build_app(cfg: Config, svc: Service) -> Application:
     app.add_handler(CommandHandler("ekspor", cmd_ekspor))
     app.add_handler(CommandHandler("tanya", _command("ask_command")))
     app.add_handler(CommandHandler("dashboard", _command("dashboard_command")))
+    app.add_handler(CommandHandler("aman", _command("aman_command")))
+    app.add_handler(CommandHandler("gajian", _command("gajian_command")))
+    app.add_handler(CommandHandler("target", _command("target_command")))
+    app.add_handler(CommandHandler("tabung", _command("tabung_command")))
+    app.add_handler(CommandHandler("tarik", _command("tarik_command")))
     app.add_handler(CommandHandler("anggaran", _command("budget_command")))
     app.add_handler(CommandHandler("ringkasan", _command("summary_command")))
     app.add_handler(CommandHandler("tagihan", _command("bills_command", kind="tagihan")))

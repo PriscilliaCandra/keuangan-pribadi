@@ -62,7 +62,16 @@ Jangan membuka porta 8765 langsung ke internet.
   karena berisi data keuangan pengguna. Uji pemulihan sekali: salin berkas ke `data/keuangan.db` saat bot mati.
 - Aktifkan enkripsi disk di server.
 
-## 6. Mengundang pengguna
+## 6. Pendaftaran pengguna
+Dua mode (`REGISTRATION` di `.env`):
+- **`invite`** (bawaan): hanya yang punya kode undangan. Cocok untuk beta kecil.
+- **`open`**: siapa pun yang menemukan bot bisa `/daftar` sendiri dan mendapat akun terpisah. Sebelum membukanya
+  ingat: (a) tiap pengguna memakai sumber daya server dan AI-mu (kuota harian membantu, tetapi atur `MAX_USERS`
+  dan `SIGNUPS_PER_HOUR` dengan sadar); (b) bot Telegram bisa ditemukan siapa saja, termasuk skrip penyalah-guna;
+  (c) semua kewajiban pada bagian "Sebelum menarik bayaran" berlaku sejak ada pengguna yang tidak kamu kenal.
+  Pantau `/statistik` dan siap-siap `/blokir`.
+
+### Mengundang pengguna (mode invite)
 1. Admin kirim `/undang` (atau `/undang 5 untuk grup A` untuk 5x pakai) ke bot → dapat kode + tautan.
 2. Calon pengguna membuka tautan / mengetik `/daftar KODE`, membaca ringkasan privasi, lalu `/setuju`.
 3. `/pengguna` (hanya metadata), `/blokir <id>`, `/aktifkan <id>`, `/statistik`.

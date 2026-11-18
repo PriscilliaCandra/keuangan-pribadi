@@ -11,6 +11,7 @@ from typing import Any, Callable
 
 from . import bills as bills_mod
 from . import agent, budget, email_scan, ledger, reports
+from . import plans as plans_mod
 from .access import AccessControl, AiBusy, QuotaExceeded
 from .categories import CATEGORIES, LAINNYA, guess_category, match_category
 from .db import Database
@@ -35,6 +36,10 @@ HELP = """Halo! Aku pencatat keuanganmu.
 📤 /ekspor — CSV bulan ini · /ekspor semua · /ekspor 2026-10
 🤖 /tanya berapa pengeluaran kopi bulan ini? (atau ketik pertanyaannya langsung)
 📈 /dashboard — grafik pemasukan & pengeluaran (tautan masuk sekali pakai)
+
+🧮 /aman — uang aman per hari sampai gajian (atur tanggal gajian: /gajian 25)
+🎯 /target liburan bali 5jt sampai 2027-03 · "nabung 500rb liburan" · /tarik liburan 200rb
+💡 Nominal bisa ditulis sehari-hari: goceng, ceban, gocap, cepek, sejuta
 
 💰 /anggaran — lihat anggaran
    /anggaran makanan 1,5jt — atur anggaran per kategori
@@ -94,6 +99,7 @@ class Service:
         self.email_fetcher = email_fetcher
         # Tanpa konfigurasi: tak ada admin dan kuota AI longgar (dipakai tes & mode sederhana).
         self.access = access or AccessControl(db, ai_daily_limit=100_000, clock=clock)
+        self.plans = plans_mod.PlanStore(db)
         self._scan_lock = threading.Lock()  # satu pemindaian email pada satu waktu
         self.dashboard_base_url: str | None = None  # diisi saat dashboard menyala
 
@@ -142,6 +148,9 @@ class Service:
                 return "Belum ada catatan untuk diubah."
             reply = ledger.apply_edits(self.db, chat_id, token, quick.pairs, today)
             return reply + (note if reply.startswith("✏️") else "")
+        saved = self._saving_from_text(chat_id, text)
+        if saved is not None:
+            return saved
         if self.llm and is_question(text):
             return self.ask_command(chat_id, text)
         income = parse_income(text, today)
@@ -302,7 +311,9 @@ class Service:
         args = args.strip()
         today = self.clock()
         if not args:
-            return budget.format_statuses(budget.statuses(self.db, chat_id, today))
+            text = budget.format_statuses(budget.statuses(self.db, chat_id, today))
+            forecasts = plans_mod.budget_forecasts(self.db, chat_id, today)
+            return text + ("\n\n" + plans_mod.format_forecasts(forecasts) if forecasts else "")
         m = re.match(r"(?i)hapus\s+(.+)$", args)
         if m:
             key = self._budget_key(m.group(1))
@@ -337,10 +348,101 @@ class Service:
         items = budget.statuses(self.db, chat_id, today)
         if items:
             parts.append(budget.format_statuses(items))
+        forecasts = plans_mod.budget_forecasts(self.db, chat_id, today)
+        if forecasts:
+            parts.append(plans_mod.format_forecasts(forecasts))
+        safe = plans_mod.safe_daily(self.db, self.plans, chat_id, today)
+        if safe is not None and safe.available > 0:
+            parts.append(f"🧮 Uang aman: {rupiah(safe.per_day)}/hari sampai {tanggal(safe.next_payday)} (detail: /aman)")
         return "\n\n".join(parts)
 
     def weekly_job(self, chat_id: int) -> str:
         return self.summary_command(chat_id, "minggu")
+
+    # ---------- perencanaan: gajian, uang aman, target tabungan ----------
+    MAX_GOALS = 20
+
+    def gajian_command(self, chat_id: int, args: str = "") -> str:
+        token = args.strip()
+        if not token:
+            day = self.plans.get_payday(chat_id)
+            return (f"Tanggal gajianmu: {day}." if day else "Tanggal gajian belum diatur.") + "\nAtur: /gajian 25"
+        if not token.isdigit() or not 1 <= int(token) <= 31:
+            return "Format: /gajian 25 (tanggal 1-31)"
+        self.plans.set_payday(chat_id, int(token))
+        return f"✅ Tanggal gajian: {int(token)}. Lihat uang aman harianmu dengan /aman"
+
+    def aman_command(self, chat_id: int, args: str = "") -> str:
+        return plans_mod.format_safe_daily(plans_mod.safe_daily(self.db, self.plans, chat_id, self.clock()))
+
+    def target_command(self, chat_id: int, args: str = "") -> str:
+        today, text = self.clock(), args.strip()
+        if not text:
+            return plans_mod.format_goals(self.plans.list_goals(chat_id), today)
+        if m := re.match(r"(?i)hapus\s+(.+)$", text):
+            goal = self.plans.find_goal(chat_id, m.group(1))
+            if goal is None:
+                return "Target itu tidak ditemukan. Lihat daftar: /target"
+            self.plans.delete_goal(chat_id, goal.id)
+            return f"🗑️ Target '{goal.name}' dihapus (tabungan di dalamnya ikut dihapus dari catatan)."
+        deadline = None
+        if m := re.search(r"(?i)\bsampai\s+(\S+)", text):
+            deadline = plans_mod.parse_deadline(m.group(1), today)
+            if deadline is None:
+                return "Tenggat tidak terbaca atau sudah lewat. Contoh: sampai 2027-06"
+            text = text[: m.start()] + " " + text[m.end():]
+        found = find_amount(text)
+        name = ""
+        if found:
+            s, e = found[1]
+            name = re.sub(r"\s+", " ", text[:s] + " " + text[e:]).strip(" -:,.")[:60]
+        if not found or not name:
+            return ("Format: /target <nama> <jumlah> [sampai 2027-06]\n"
+                    "Contoh: /target liburan bali 5jt sampai 2027-03")
+        existing = self.plans.find_goal(chat_id, name)
+        if existing is None and len(self.plans.list_goals(chat_id)) >= self.MAX_GOALS:
+            return f"Maksimal {self.MAX_GOALS} target. Hapus yang sudah tidak dipakai: /target hapus <nama>"
+        goal, created = self.plans.create_goal(chat_id, existing.name if existing else name,
+                                               found[0], deadline, today)
+        head = "🎯 Target dibuat" if created else "✏️ Target diperbarui"
+        return head + "\n" + plans_mod.format_goal(goal, today) + "\nTabung: /tabung " + goal.name.split()[0] + " 500rb"
+
+    def tabung_command(self, chat_id: int, args: str = "", sign: int = 1) -> str:
+        goals = self.plans.list_goals(chat_id)
+        if not goals:
+            return "Belum ada target tabungan. Buat dulu: /target liburan bali 5jt"
+        found = find_amount(args)
+        if not found:
+            return "Format: /tabung liburan 500rb   (tarik: /tarik liburan 200rb)"
+        s, e = found[1]
+        name = re.sub(r"\s+", " ", args[:s] + " " + args[e:]).strip(" -:,.")
+        goal = self.plans.find_goal(chat_id, name) if name else (goals[0] if len(goals) == 1 else None)
+        if goal is None:
+            return ("Target yang mana? " + ", ".join(g.name for g in goals) +
+                    "\nContoh: /tabung " + goals[0].name + " 500rb")
+        today = self.clock()
+        updated = self.plans.deposit(chat_id, goal, sign * found[0], today)
+        if updated is None:
+            return "Tabungan di target itu tidak cukup untuk ditarik sebesar itu."
+        verb = "Ditabung" if sign > 0 else "Ditarik"
+        tail = "\n(Setoran ini dikurangkan dari uang aman harianmu, lihat /aman)" if sign > 0 else ""
+        return f"💰 {verb} {rupiah(found[0])} → {goal.name}\n" + plans_mod.format_goal(updated, today) + tail
+
+    def tarik_command(self, chat_id: int, args: str = "") -> str:
+        return self.tabung_command(chat_id, args, sign=-1)
+
+    def _saving_from_text(self, chat_id: int, text: str) -> str | None:
+        """'nabung 500rb liburan' / 'tabung liburan 500rb'. 'tabung gas 150rb' (benda) tetap pengeluaran."""
+        m = re.match(r"(?i)^\s*(nabung|menabung|tabung)\b(.*)$", text)
+        if not m or find_amount(m.group(2)) is None:
+            return None
+        if m.group(1).lower() == "tabung":  # kata benda: hanya bila menyebut nama sebuah target
+            found = find_amount(m.group(2))
+            s, e = found[1]
+            name = re.sub(r"\s+", " ", m.group(2)[:s] + " " + m.group(2)[e:]).strip(" -:,.")
+            if not name or self.plans.find_goal(chat_id, name) is None:
+                return None
+        return self.tabung_command(chat_id, m.group(2))
 
     # ---------- tagihan & langganan ----------
     def bills_command(self, chat_id: int, kind: str, args: str) -> str:

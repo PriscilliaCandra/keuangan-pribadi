@@ -15,6 +15,7 @@ from typing import Any
 
 from . import bills as bills_mod
 from . import budget
+from . import plans as plans_mod
 from .categories import exact_category, exact_income_category, match_category, match_income_category
 from .db import Database
 from .formatting import rupiah
@@ -68,6 +69,18 @@ TOOL_SPECS: list[dict[str, Any]] = [
         "parameters": {"type": "object", "properties": {}},
     },
     {
+        "name": "uang_aman_harian",
+        "description": ("Uang yang aman dipakai per hari sampai gajian berikutnya, sisa uang, rata-rata "
+                        "pengeluaran 7 hari, dan perkiraan kapan uang habis. Pakai untuk 'uang aman', "
+                        "'boleh habiskan berapa per hari', 'sampai gajian'."),
+        "parameters": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "target_tabungan",
+        "description": "Daftar target tabungan: terkumpul, target, persen, tenggat, setoran per bulan.",
+        "parameters": {"type": "object", "properties": {}},
+    },
+    {
         "name": "daftar_tagihan",
         "description": "Tagihan & langganan aktif beserta jatuh tempo berikutnya dan total per bulan.",
         "parameters": {"type": "object", "properties": {}},
@@ -80,7 +93,8 @@ def system_prompt(today: date) -> str:
         "Kamu asisten keuangan pribadi. Jawab pertanyaan pengguna tentang datanya HANYA "
         "berdasarkan hasil alat. Selalu panggil alat untuk mendapat angka; jangan menebak. "
         "Salin nilai berakhiran _rp apa adanya dan jangan menghitung ulang total yang sudah ada. "
-        "Panduan alat: 'sisa uang/saldo/tabungan' -> arus_kas; 'anggaran' -> status_anggaran; "
+        "Panduan alat: 'sisa uang/saldo' -> arus_kas; 'uang aman per hari/sampai gajian' -> "
+        "uang_aman_harian; 'target/tabungan' -> target_tabungan; 'anggaran' -> status_anggaran; "
         "pertanyaan lintas waktu ('bulan apa', 'tren', 'paling') -> cari_transaksi dengan "
         "periode=semua atau 3_bulan dan kelompok=bulan; membandingkan bulan -> kelompok=bulan; "
         "tanpa periode disebut, anggap bulan_ini. "
@@ -166,12 +180,14 @@ class QueryTools:
 
     def __init__(self, db: Database, chat_id: int, today: date):
         self.db, self.chat_id, self.today = db, chat_id, today
+        self.plans = plans_mod.PlanStore(db)
 
     def run(self, name: str, args: dict | None) -> dict[str, Any]:
         """Jalankan alat. Galat dikembalikan ke model sebagai {"error": ...}, tidak dilempar."""
         handlers = {
             "cari_transaksi": self.cari_transaksi, "arus_kas": self.arus_kas,
             "status_anggaran": self.status_anggaran, "daftar_tagihan": self.daftar_tagihan,
+            "uang_aman_harian": self.uang_aman_harian, "target_tabungan": self.target_tabungan,
         }
         handler = handlers.get(name)
         if handler is None:
@@ -266,10 +282,38 @@ class QueryTools:
         items = budget.statuses(self.db, self.chat_id, self.today)
         if not items:
             return {"anggaran": [], "catatan": "Belum ada anggaran yang diatur."}
+        predicted = {f.name: f.depletion.isoformat()
+                     for f in plans_mod.budget_forecasts(self.db, self.chat_id, self.today)}
         return {"anggaran": [{
             "kategori": budget.label(s.category), "terpakai_rp": rupiah(s.spent),
             "batas_rp": rupiah(s.limit), "persen": s.pct, "sisa_rp": rupiah(s.limit - s.spent),
+            "prediksi_habis": predicted.get(budget.label(s.category)),
         } for s in items]}
+
+    def uang_aman_harian(self, args: dict) -> dict[str, Any]:
+        s = plans_mod.safe_daily(self.db, self.plans, self.chat_id, self.today)
+        if s is None:
+            return {"catatan": "Belum ada dasar hitungan: catat pemasukan atau atur anggaran total."}
+        return {
+            "dasar": "sisa anggaran total" if s.mode == "anggaran" else "pemasukan dikurangi pengeluaran, tagihan, tabungan",
+            "aman_per_hari_rp": rupiah(s.per_day), "sisa_uang_rp": rupiah(s.available),
+            "hari_sampai_gajian": s.days_left, "gajian_berikutnya": s.next_payday.isoformat(),
+            "rata_rata_7_hari_rp": rupiah(s.avg7), "di_atas_batas_aman": s.over_pace and s.available > 0,
+            "perkiraan_uang_habis": s.depletion.isoformat() if s.depletion else None,
+            "tanggal_gajian_belum_diatur": s.payday_is_default,
+        }
+
+    def target_tabungan(self, args: dict) -> dict[str, Any]:
+        goals = self.plans.list_goals(self.chat_id)
+        if not goals:
+            return {"target": [], "catatan": "Belum ada target tabungan."}
+        rows = []
+        for g in goals:
+            suggestion = plans_mod.monthly_suggestion(g, self.today)
+            rows.append({"nama": g.name, "terkumpul_rp": rupiah(g.saved), "target_rp": rupiah(g.target),
+                         "persen": g.pct, "tenggat": g.deadline.isoformat() if g.deadline else None,
+                         "setoran_per_bulan_rp": rupiah(suggestion) if suggestion else None})
+        return {"target": rows}
 
     def daftar_tagihan(self, args: dict) -> dict[str, Any]:
         bills = self.db.list_bills(self.chat_id)

@@ -5,8 +5,10 @@ mengingatkan tagihan, menemukan langganan terlupa dari email, dan **menjawab per
 keuanganmu dalam bahasa Indonesia**. Data disimpan di SQLite. AI bisa **lokal dan gratis (Ollama)**
 atau Claude.
 
-**Mode beta tertutup (multi-pengguna)**: bot bisa dipakai banyak orang dengan **kode undangan**. Tiap
-pengguna hanya melihat datanya sendiri, menyetujui ringkasan privasi saat mendaftar, punya kuota AI
+**Multi-pengguna**: setiap orang punya akunnya sendiri (identitasnya diverifikasi Telegram; tanpa
+kata sandi). Pendaftaran bisa **`REGISTRATION=invite`** (hanya dengan kode undangan) atau
+**`REGISTRATION=open`** (siapa pun yang menemukan bot bisa `/daftar` sendiri, dengan batas total
+pengguna dan batas laju pendaftaran). Tiap pengguna hanya melihat datanya sendiri, menyetujui ringkasan privasi saat mendaftar, punya kuota AI
 harian, dan bisa `/ekspor` atau `/hapus_akun` kapan saja. Admin membuat undangan dan mengelola pengguna
 tetapi **tidak punya perintah untuk membaca catatan pengguna**. Lihat [docs/DEPLOY.md](docs/DEPLOY.md).
 
@@ -14,6 +16,8 @@ tetapi **tidak punya perintah untuk membaca catatan pengguna**. Lihat [docs/DEPL
 
 **Mencatat**
 - Pengeluaran: `makan siang 35rb`, `bensin 50k kemarin`, `laptop 1,5jt`, `Rp 50.000 parkir`.
+- **Bahasa sehari-hari**: `goceng` (5rb), `ceban` (10rb), `noban` (20rb), `gocap` (50rb), `cepek` (100rb),
+  `sejuta`; bisa dikalikan: `bakso 2 goceng` = 10rb.
 - Pemasukan: `gaji 8jt`, `+500rb freelance`, atau `/masuk bonus 1jt`.
 - **Foto struk**: model visi membaca toko, total, tanggal, kategori; kamu konfirmasi lewat tombol ✅/❌.
 - Kategori otomatis dari kata kunci (gratis, tanpa AI); kalau tidak dikenali, AI yang menebak.
@@ -21,7 +25,15 @@ tetapi **tidak punya perintah untuk membaca catatan pengguna**. Lihat [docs/DEPL
 **Memahami**
 - `/saldo`: pemasukan, pengeluaran, selisih, dan persen ditabung bulan ini.
 - Ringkasan **mingguan otomatis** tiap Minggu 19:00; `/ringkasan bulan` untuk sebulan.
-- **Anggaran** per kategori dan total, dengan peringatan di 80% dan 100%.
+- **Anggaran** per kategori dan total, dengan peringatan di 80% dan 100% dan **prediksi**: "dengan laju ini
+  anggaran makanan habis sekitar 23 Nov".
+- **Uang aman per hari sampai gajian** (`/aman`): atur tanggal gajian dengan `/gajian 25`. Dihitung dari
+  pemasukan siklus ini dikurangi pengeluaran, tagihan yang jatuh tempo sebelum gajian, dan setoran tabungan
+  (atau dari sisa anggaran total bila diatur), plus perbandingan dengan rata-rata 7 harimu dan perkiraan kapan
+  uang habis.
+- **Target tabungan**: `/target liburan bali 5jt sampai 2027-03`, lalu `nabung 500rb liburan` (atau
+  `/tabung`, `/tarik`). Ada progres dan saran setoran per bulan. "tabung gas 150rb" tetap dicatat sebagai
+  pengeluaran.
 - **`/tanya`**: tanya apa saja, mis. `berapa pengeluaran kopi bulan ini?`, `bulan apa paling boros?`,
   `berapa sisa uangku?`. Pertanyaan yang diketik langsung (diawali "berapa", "apa", "bulan apa", atau
   berakhiran `?`) otomatis dijawab agen.
@@ -60,6 +72,8 @@ tetapi **tidak punya perintah untuk membaca catatan pengguna**. Lihat [docs/DEPL
 | teks bebas / foto struk | catat pengeluaran |
 | `gaji 8jt` · `+500rb freelance` · `/masuk …` | catat pemasukan |
 | `/saldo` | arus kas bulan ini |
+| `/gajian 25` · `/aman` | atur tanggal gajian · uang aman per hari sampai gajian |
+| `/target <nama> <jumlah> [sampai 2027-03]` · `/tabung <nama> <jumlah>` · `/tarik …` | target tabungan |
 | `/riwayat` | 10 catatan terakhir + ID (pemasukan berawalan `m`) |
 | `/edit <id> <kategori\|nominal\|tanggal\|catatan> <nilai>` | ubah catatan |
 | `/hapus` · `/hapus <id>` | hapus catatan terakhir / per ID |
@@ -71,7 +85,7 @@ tetapi **tidak punya perintah untuk membaca catatan pengguna**. Lihat [docs/DEPL
 | `/tagihan` · `/langganan` | daftar, atau tambah dengan argumen |
 | `/pakai <nama>` · `/batal <nama>` | konfirmasi masih dipakai / sudah berhenti |
 | `/scan_email` | pindai email sekarang (admin) |
-| `/daftar KODE` · `/setuju` · `/privasi` | pendaftaran beta, persetujuan, ringkasan privasi |
+| `/daftar [KODE]` · `/setuju` · `/privasi` | buat akun (kode hanya di mode undangan), persetujuan, ringkasan privasi |
 | `/hapus_akun` | hapus semua datamu (butuh konfirmasi `YA-HAPUS`) |
 | `/undang [n] [catatan]` · `/pengguna` · `/blokir <id>` · `/aktifkan <id>` · `/statistik` | khusus admin |
 
@@ -88,7 +102,7 @@ python -m keuangan
 ```
 
 1. **Token bot**: chat `@BotFather` → `/newbot` → salin token ke `TELEGRAM_BOT_TOKEN`.
-2. **Admin**: jalankan bot dengan `ADMIN_CHAT_IDS` kosong, kirim pesan apa saja, bot membalas Chat ID-mu. Isi ke `.env`, restart. Pengguna lain baru bisa masuk lewat **kode undangan** dari `/undang` (hanya chat pribadi; grup diabaikan).
+2. **Admin**: jalankan bot dengan `ADMIN_CHAT_IDS` kosong, kirim pesan apa saja, bot membalas Chat ID-mu. Isi ke `.env`, restart. Pengguna lain masuk lewat **kode undangan** dari `/undang`, atau mendaftar sendiri bila `REGISTRATION=open` (hanya chat pribadi; grup diabaikan).
 3. **AI (opsional, pilih salah satu)**. Tanpa AI, pencatatan teks, anggaran, saldo, riwayat, edit, ekspor, dan pengingat manual tetap jalan.
    - **Ollama (gratis, lokal)**: `ollama pull qwen2.5:7b` (teks, email, `/tanya`) dan `ollama pull qwen2.5vl:7b` (foto struk), lalu isi `OLLAMA_MODEL=qwen2.5:7b` dan `OLLAMA_VISION_MODEL=qwen2.5vl:7b`. **Ollama harus sedang berjalan.**
    - **Claude (berbayar per pemakaian)**: isi `ANTHROPIC_API_KEY`. Model default `claude-opus-5-5`; untuk menekan biaya coba `ANTHROPIC_MODEL=claude-haiku-5-5` dan bandingkan hasilnya.
@@ -106,10 +120,14 @@ Test: `pip install -r requirements-dev.txt && pytest`
 - Agen `/tanya` hanya punya **alat baca-saja** yang terkunci ke chat-mu; tidak ada alat untuk mengubah, menghapus, membayar, atau mengirim. Argumen alat dari model divalidasi dan dibatasi.
 - Ekspor CSV menetralkan *formula injection* (sel yang diawali `= + - @`).
 - **Akses**: hanya pengguna aktif (kode undangan + persetujuan) dan admin yang dilayani; chat grup diabaikan.
-  Kode undangan: 8 karakter acak, kedaluwarsa 7 hari, pemakaian atomik, tebakan dibatasi 5x/15 menit.
+  Mode undangan: kode 8 karakter acak, kedaluwarsa 7 hari, pemakaian atomik, tebakan dibatasi 5x/15 menit.
+  Mode terbuka: batas total pengguna (`MAX_USERS`) dan batas pendaftaran baru per jam (`SIGNUPS_PER_HOUR`);
+  akun baru tetap harus menyetujui privasi sebelum bisa memakai apa pun.
   Tiap kueri data berkunci `chat_id`, dan ada tes yang memastikan pengguna A tidak bisa membaca, mengubah,
   atau menghapus data B (lewat perintah, balasan/reply, ekspor, `/tanya`, maupun dashboard).
 - **Kuota AI**: batas harian per pengguna dan antrean global, supaya satu orang tidak menghabiskan server.
+  Hitungan pemakaian (angka saja) disimpan 7 hari, termasuk setelah hapus akun, supaya kuota tak bisa
+  direset dengan hapus-akun lalu daftar ulang.
 - **Dashboard**: hanya mendengarkan `127.0.0.1` (untuk akses publik pasang proxy TLS, lihat docs/DEPLOY.md).
   Login lewat token sekali pakai (disimpan sebagai hash) yang ditukar dengan tombol, bukan saat tautan dibuka,
   supaya pengambil pratinjau tautan tak menghabiskannya; sesi acak di cookie HttpOnly + SameSite=Strict

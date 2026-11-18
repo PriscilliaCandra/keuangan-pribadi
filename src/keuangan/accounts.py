@@ -15,6 +15,7 @@ from .db import Database
 CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"  # tanpa 0/O/1/I/L yang membingungkan
 CODE_LENGTH = 8
 TOUCH_EVERY_SECONDS = 60
+AI_USAGE_KEEP_DAYS = 7  # lama hitungan pemakaian AI disimpan (anti-penyalahgunaan kuota)
 
 
 def normalize_code(raw: str) -> str:
@@ -76,7 +77,11 @@ class AccountStore:
             " ELSE users.display_name END",
             (chat_id, clean_name(name), self._ts(), self._ts()))
 
-    def create_pending(self, chat_id: int, name: str, invite_code: str) -> User:
+    def count_users(self) -> int:
+        """Jumlah pengguna biasa (bukan admin) dalam status apa pun: dasar batas kapasitas."""
+        return self.db.query("SELECT COUNT(*) AS n FROM users WHERE role='user'")[0]["n"]
+
+    def create_pending(self, chat_id: int, name: str, invite_code: str | None) -> User:
         self.db.execute(
             "INSERT INTO users (chat_id, display_name, status, role, invite_code, created_at)"
             " VALUES (?, ?, 'pending', 'user', ?, ?)"
@@ -115,6 +120,13 @@ class AccountStore:
     def list_users(self, limit: int = 50) -> list[User]:
         rows = self.db.query("SELECT * FROM users ORDER BY created_at DESC, chat_id LIMIT ?", (limit,))
         return [_user(r) for r in rows]
+
+    def active_since(self, days: int) -> int:
+        """Pengguna biasa yang terlihat dalam `days` hari terakhir (metadata saja)."""
+        cutoff = self._ts(timedelta(days=-days))
+        return self.db.query(
+            "SELECT COUNT(*) AS n FROM users WHERE role='user' AND status='active' AND last_seen >= ?",
+            (cutoff,))[0]["n"]
 
     def active_chat_ids(self) -> list[int]:
         return [r["chat_id"] for r in self.db.query(
@@ -213,3 +225,9 @@ class AccountStore:
         now = self._ts()
         self.db.execute("DELETE FROM sessions WHERE expires_at <= ?", (now,))
         self.db.execute("DELETE FROM login_tokens WHERE expires_at <= ?", (now,))
+        self.purge_old_usage()
+
+    def purge_old_usage(self, keep_days: int = AI_USAGE_KEEP_DAYS) -> None:
+        """Hitungan pemakaian AI lebih tua dari `keep_days` hari dibuang (batas retensi)."""
+        cutoff = (self._now() - timedelta(days=keep_days)).date().isoformat()
+        self.db.execute("DELETE FROM ai_usage WHERE day < ?", (cutoff,))
