@@ -11,6 +11,7 @@ from typing import Any, Callable
 
 from . import bills as bills_mod
 from . import agent, budget, email_scan, ledger, reports
+from .access import AccessControl, AiBusy, QuotaExceeded
 from .categories import CATEGORIES, LAINNYA, guess_category, match_category
 from .db import Database
 from .formatting import rupiah, tanggal
@@ -33,7 +34,7 @@ HELP = """Halo! Aku pencatat keuanganmu.
 🗑️ "hapus yang tadi" · /hapus — catatan terakhir · /hapus 12 — per ID
 📤 /ekspor — CSV bulan ini · /ekspor semua · /ekspor 2026-10
 🤖 /tanya berapa pengeluaran kopi bulan ini? (atau ketik pertanyaannya langsung)
-📈 /dashboard — grafik pemasukan & pengeluaran (dibuka di laptop)
+📈 /dashboard — grafik pemasukan & pengeluaran (tautan masuk sekali pakai)
 
 💰 /anggaran — lihat anggaran
    /anggaran makanan 1,5jt — atur anggaran per kategori
@@ -53,6 +54,12 @@ HELP = """Halo! Aku pencatat keuanganmu.
 Kategori: """ + ", ".join(CATEGORIES)
 
 NO_AMOUNT = 'Aku tidak menemukan nominalnya. Coba: "makan siang 35rb" atau "kopi 1,5k".'
+AI_BUSY = "AI sedang sibuk melayani pengguna lain. Coba lagi sebentar. Pencatatan teks tetap berjalan."
+
+
+def _quota_message(exc: QuotaExceeded) -> str:
+    return (f"Kuota AI harianmu habis ({exc.used}/{exc.limit}); kembali normal besok. "
+            "Pencatatan teks, anggaran, dan dashboard tetap berjalan.")
 
 
 def receipt_to_expense(data: dict[str, Any] | None, today: date) -> ParsedExpense | None:
@@ -78,21 +85,30 @@ def receipt_to_expense(data: dict[str, Any] | None, today: date) -> ParsedExpens
 class Service:
     def __init__(self, db: Database, llm: Llm | None = None,
                  clock: Callable[[], date] = date.today, reminder_days: int = 3,
-                 email_fetcher: Callable[[], list[email_scan.RawEmail]] | None = None):
+                 email_fetcher: Callable[[], list[email_scan.RawEmail]] | None = None,
+                 access: AccessControl | None = None):
         self.db = db
         self.llm = llm
         self.clock = clock
         self.reminder_days = reminder_days
         self.email_fetcher = email_fetcher
+        # Tanpa konfigurasi: tak ada admin dan kuota AI longgar (dipakai tes & mode sederhana).
+        self.access = access or AccessControl(db, ai_daily_limit=100_000, clock=clock)
         self._scan_lock = threading.Lock()  # satu pemindaian email pada satu waktu
-        self.dashboard_url: str | None = None  # diisi saat dashboard lokal menyala
+        self.dashboard_base_url: str | None = None  # diisi saat dashboard menyala
+
+    def help_text(self, chat_id: int) -> str:
+        return HELP + self.access.help_extra(chat_id)
 
     def dashboard_command(self, chat_id: int, args: str = "") -> str:
-        if not self.dashboard_url:
+        """Tautan masuk dashboard: token sekali pakai, berlaku 10 menit, khusus pemintanya."""
+        if not self.dashboard_base_url:
             return "Dashboard tidak aktif (cek DASHBOARD_PORT di .env, 0 berarti dimatikan)."
-        return ("📈 Dashboard (hanya bisa dibuka di laptop tempat bot berjalan):\n"
-                f"{self.dashboard_url}\n"
-                "Jangan bagikan tautan ini: berisi kunci akses ke datamu.")
+        token = self.access.accounts.create_login_token(chat_id, ttl_seconds=600)
+        return ("📈 Dashboard-mu:\n"
+                f"{self.dashboard_base_url}/?t={token}\n"
+                "Tautan ini sekali pakai dan berlaku 10 menit. Jangan dibagikan. "
+                "Kirim /dashboard lagi bila kedaluwarsa.")
 
     # ---------- pengeluaran ----------
     def handle_text(self, chat_id: int, text: str, reply_to: str | None = None) -> str:
@@ -135,7 +151,7 @@ class Service:
         if parsed is None:
             return NO_AMOUNT
         if parsed.category is None:
-            parsed.category = self._llm_category(parsed.description) or LAINNYA
+            parsed.category = self._llm_category(chat_id, parsed.description) or LAINNYA
         return self.save_expense(chat_id, parsed, "teks")
 
     def _find_ref(self, chat_id: int, words: list[str]) -> str | None:
@@ -150,14 +166,15 @@ class Service:
         recent = self.db.recent_entries(chat_id, 1)
         return ledger.ref_token(*recent[0]) if recent else None
 
-    def _llm_category(self, description: str) -> str | None:
+    def _llm_category(self, chat_id: int, description: str) -> str | None:
         if not self.llm:
             return None
         try:
-            return self.llm.categorize(description)
-        except LlmError as exc:
-            log.warning("Kategorisasi AI gagal: %s", exc)
-            return None
+            with self.access.ai_slot(chat_id, count=False):  # murah: tak makan kuota, tetap antre
+                return self.llm.categorize(description)
+        except (LlmError, AiBusy) as exc:
+            log.warning("Kategorisasi AI dilewati: %s", exc)
+            return None  # jatuh ke "Lainnya"; pencatatan tetap berhasil
 
     def save_expense(self, chat_id: int, parsed: ParsedExpense, source: str) -> str:
         today = self.clock()
@@ -175,13 +192,19 @@ class Service:
             lines.extend(budget.check_alerts(self.db, chat_id, category, today))
         return "\n".join(lines)
 
-    def read_receipt(self, image: bytes, media_type: str = "image/jpeg") -> tuple[ParsedExpense | None, str]:
+    def read_receipt(self, chat_id: int, image: bytes,
+                     media_type: str = "image/jpeg") -> tuple[ParsedExpense | None, str]:
         """Baca foto struk. Mengembalikan (pengeluaran | None, pesan_untuk_user)."""
         if not self.llm:
             return None, ("Baca foto struk butuh AI (isi OLLAMA_MODEL atau ANTHROPIC_API_KEY di .env). "
                           "Sementara, ketik manual: \"indomaret 85rb\".")
         try:
-            data = self.llm.read_receipt(image, media_type)
+            with self.access.ai_slot(chat_id):
+                data = self.llm.read_receipt(image, media_type)
+        except QuotaExceeded as exc:
+            return None, _quota_message(exc)
+        except AiBusy:
+            return None, AI_BUSY
         except LlmError as exc:
             log.warning("Baca struk gagal: %s", exc)
             return None, "Maaf, struknya belum bisa dibaca sekarang. Coba lagi atau ketik manual."
@@ -255,8 +278,13 @@ class Service:
         today = self.clock()
         tools = agent.QueryTools(self.db, chat_id, today)
         try:
-            answer = self.llm.chat_with_tools(agent.system_prompt(today), q[:500],
-                                              agent.TOOL_SPECS, tools.run)
+            with self.access.ai_slot(chat_id):
+                answer = self.llm.chat_with_tools(agent.system_prompt(today), q[:500],
+                                                  agent.TOOL_SPECS, tools.run)
+        except QuotaExceeded as exc:
+            return _quota_message(exc)
+        except AiBusy:
+            return AI_BUSY
         except LlmError as exc:
             log.warning("Tanya gagal: %s", exc)
             return "Maaf, aku belum bisa menjawab sekarang. Coba lagi sebentar lagi."
@@ -368,6 +396,9 @@ class Service:
 
     # ---------- email ----------
     def scan_email(self, chat_id: int) -> list[str]:
+        if not self.access.is_admin(chat_id):
+            # Satu kotak surat milik pemilik; mengakses email pengguna lain tidak ditawarkan.
+            return ["Fitur baca email belum tersedia untuk akunmu."]
         if not (self.email_fetcher and self.llm):
             return ["Pemindai email belum aktif. Isi IMAP_* dan pengaturan AI (OLLAMA_MODEL atau ANTHROPIC_API_KEY) di .env."]
         if not self._scan_lock.acquire(blocking=False):

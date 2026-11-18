@@ -2,8 +2,13 @@
 
 Bot Telegram yang mencatat pengeluaran dan pemasukan dari chat atau foto struk, memantau anggaran,
 mengingatkan tagihan, menemukan langganan terlupa dari email, dan **menjawab pertanyaan tentang
-keuanganmu dalam bahasa Indonesia**. Data disimpan di SQLite lokal. AI bisa **lokal dan gratis (Ollama)**
+keuanganmu dalam bahasa Indonesia**. Data disimpan di SQLite. AI bisa **lokal dan gratis (Ollama)**
 atau Claude.
+
+**Mode beta tertutup (multi-pengguna)**: bot bisa dipakai banyak orang dengan **kode undangan**. Tiap
+pengguna hanya melihat datanya sendiri, menyetujui ringkasan privasi saat mendaftar, punya kuota AI
+harian, dan bisa `/ekspor` atau `/hapus_akun` kapan saja. Admin membuat undangan dan mengelola pengguna
+tetapi **tidak punya perintah untuk membaca catatan pengguna**. Lihat [docs/DEPLOY.md](docs/DEPLOY.md).
 
 ## Fitur
 
@@ -21,8 +26,9 @@ atau Claude.
   `berapa sisa uangku?`. Pertanyaan yang diketik langsung (diawali "berapa", "apa", "bulan apa", atau
   berakhiran `?`) otomatis dijawab agen.
 
-**Dashboard web (hanya-baca, hanya di laptop tempat bot berjalan)**
-- Kirim `/dashboard` di Telegram, lalu buka tautannya di browser laptop.
+**Dashboard web (hanya-baca, login per pengguna)**
+- Kirim `/dashboard` di Telegram → tautan masuk **sekali pakai (10 menit)**; tekan "Masuk" di halamannya.
+  Sesi berlaku 7 hari dan bisa diakhiri dengan tombol Keluar.
 - Kartu selisih/pemasukan/pengeluaran/persen ditabung (dengan perbandingan periode sebelumnya),
   grafik kolom pemasukan vs pengeluaran (harian atau bulanan), batang kategori pengeluaran dan
   pemasukan (klik untuk memfilter transaksi), meter anggaran, daftar tagihan, dan tabel transaksi
@@ -59,12 +65,15 @@ atau Claude.
 | `/hapus` · `/hapus <id>` | hapus catatan terakhir / per ID |
 | `/ekspor [semua\|2026-10]` | unduh CSV |
 | `/tanya <pertanyaan>` | tanya data keuanganmu |
-| `/dashboard` | tautan dashboard web (hanya laptop ini) |
+| `/dashboard` | tautan masuk dashboard web (sekali pakai) |
 | `/anggaran` · `/anggaran makanan 1,5jt` · `/anggaran total 5jt` · `/anggaran hapus makanan` | anggaran |
 | `/ringkasan` · `/ringkasan bulan` | ringkasan 7 hari / bulan ini |
 | `/tagihan` · `/langganan` | daftar, atau tambah dengan argumen |
 | `/pakai <nama>` · `/batal <nama>` | konfirmasi masih dipakai / sudah berhenti |
-| `/scan_email` | pindai email sekarang |
+| `/scan_email` | pindai email sekarang (admin) |
+| `/daftar KODE` · `/setuju` · `/privasi` | pendaftaran beta, persetujuan, ringkasan privasi |
+| `/hapus_akun` | hapus semua datamu (butuh konfirmasi `YA-HAPUS`) |
+| `/undang [n] [catatan]` · `/pengguna` · `/blokir <id>` · `/aktifkan <id>` · `/statistik` | khusus admin |
 
 ## Mulai
 
@@ -79,29 +88,35 @@ python -m keuangan
 ```
 
 1. **Token bot**: chat `@BotFather` → `/newbot` → salin token ke `TELEGRAM_BOT_TOKEN`.
-2. **Chat ID**: jalankan bot dengan `ALLOWED_CHAT_IDS` kosong, kirim pesan apa saja, bot membalas Chat ID-mu. Isi ke `.env`, restart. Bot **menolak semua chat lain**.
+2. **Admin**: jalankan bot dengan `ADMIN_CHAT_IDS` kosong, kirim pesan apa saja, bot membalas Chat ID-mu. Isi ke `.env`, restart. Pengguna lain baru bisa masuk lewat **kode undangan** dari `/undang` (hanya chat pribadi; grup diabaikan).
 3. **AI (opsional, pilih salah satu)**. Tanpa AI, pencatatan teks, anggaran, saldo, riwayat, edit, ekspor, dan pengingat manual tetap jalan.
    - **Ollama (gratis, lokal)**: `ollama pull qwen2.5:7b` (teks, email, `/tanya`) dan `ollama pull qwen2.5vl:7b` (foto struk), lalu isi `OLLAMA_MODEL=qwen2.5:7b` dan `OLLAMA_VISION_MODEL=qwen2.5vl:7b`. **Ollama harus sedang berjalan.**
    - **Claude (berbayar per pemakaian)**: isi `ANTHROPIC_API_KEY`. Model default `claude-opus-5-5`; untuk menekan biaya coba `ANTHROPIC_MODEL=claude-haiku-5-5` dan bandingkan hasilnya.
    - Kalau keduanya terisi, Claude dipilih; paksa dengan `LLM_PROVIDER=ollama` atau `anthropic`.
-4. **Email (opsional, butuh AI)**: untuk Gmail aktifkan verifikasi 2 langkah, buat **App Password**, isi `IMAP_USER` dan `IMAP_PASSWORD`. Jangan memakai password utama.
+4. **Email (opsional, butuh AI, khusus admin)**: untuk Gmail aktifkan verifikasi 2 langkah, buat **App Password**, isi `IMAP_USER` dan `IMAP_PASSWORD`. Jangan memakai password utama. Fitur ini sengaja tidak ditawarkan ke pengguna lain (menyimpan kredensial email banyak orang terlalu berisiko).
 
 Test: `pip install -r requirements-dev.txt && pytest`
 
 ## Privasi & keamanan
 
-- Semua data di `data/keuangan.db` di komputermu. Jangan commit `.env` atau `data/` (sudah di `.gitignore`).
-- Dengan **Ollama**, foto struk, email, dan pertanyaanmu tidak keluar dari komputer. Dengan **Claude**, itu dikirim ke API Anthropic.
+- Semua data di `data/keuangan.db` di server yang menjalankan bot (pemiliknya secara teknis memegang database ini). Jangan commit `.env` atau `data/` (sudah di `.gitignore`). Cadangan harian otomatis di `data/backups/`.
+- Dengan **Ollama**, foto struk dan pertanyaan tidak keluar dari server. Dengan **Claude**, itu dikirim ke API Anthropic. Foto struk tidak disimpan, hanya hasil bacaannya.
 - **Email**: hanya yang lolos filter kata kunci pada subjek/pengirim, dipotong 3000 karakter, dibuka read-only (tidak menandai "dibaca").
 - Isi email/struk/catatan diperlakukan sebagai **data, bukan perintah**. Keluaran model divalidasi (nominal, tanggal, kategori) sebelum disimpan.
 - Agen `/tanya` hanya punya **alat baca-saja** yang terkunci ke chat-mu; tidak ada alat untuk mengubah, menghapus, membayar, atau mengirim. Argumen alat dari model divalidasi dan dibatasi.
 - Ekspor CSV menetralkan *formula injection* (sel yang diawali `= + - @`).
-- Bot hanya merespons `ALLOWED_CHAT_IDS`.
-- **Dashboard**: hanya mendengarkan `127.0.0.1`, wajib token (cookie HttpOnly + SameSite=Strict),
-  memeriksa header `Host` (anti DNS-rebinding), hanya metode GET/HEAD, berkas statis dari daftar putih,
-  CSP ketat tanpa skrip/gaya inline atau sumber luar, tanpa pustaka pihak ketiga (grafik SVG buatan
-  sendiri), dan semua teks dari data dipasang dengan `textContent`. Data chat lain tidak bisa dibaca.
-  Token acak disimpan di `data/dashboard_token`; jangan bagikan tautannya.
+- **Akses**: hanya pengguna aktif (kode undangan + persetujuan) dan admin yang dilayani; chat grup diabaikan.
+  Kode undangan: 8 karakter acak, kedaluwarsa 7 hari, pemakaian atomik, tebakan dibatasi 5x/15 menit.
+  Tiap kueri data berkunci `chat_id`, dan ada tes yang memastikan pengguna A tidak bisa membaca, mengubah,
+  atau menghapus data B (lewat perintah, balasan/reply, ekspor, `/tanya`, maupun dashboard).
+- **Kuota AI**: batas harian per pengguna dan antrean global, supaya satu orang tidak menghabiskan server.
+- **Dashboard**: hanya mendengarkan `127.0.0.1` (untuk akses publik pasang proxy TLS, lihat docs/DEPLOY.md).
+  Login lewat token sekali pakai (disimpan sebagai hash) yang ditukar dengan tombol, bukan saat tautan dibuka,
+  supaya pengambil pratinjau tautan tak menghabiskannya; sesi acak di cookie HttpOnly + SameSite=Strict
+  (+ Secure di HTTPS); data selalu milik pemilik sesi (tidak bisa ditentukan lewat parameter); pengguna
+  yang diblokir kehilangan sesinya; pembatas percobaan login per IP; header `Host` diperiksa; satu-satunya
+  metode tulis adalah login/logout; CSP ketat tanpa skrip/gaya inline atau sumber luar; grafik SVG buatan
+  sendiri tanpa pustaka pihak ketiga; semua teks dari data dipasang dengan `textContent`.
 
 ## Arsitektur
 
@@ -112,7 +127,11 @@ bot.py (Telegram, jadwal)  ──►  service.py (semua logika, bebas kanal)
                                    ├─ budget.py / reports.py      anggaran & ringkasan
                                    ├─ bills.py                    tagihan, langganan
                                    ├─ agent.py                    alat baca-saja untuk /tanya
-                                   ├─ dashboard.py + static/      dashboard web lokal (baca-saja)
+                                   ├─ access.py / accounts.py     undangan, persetujuan, admin, kuota AI
+                                   ├─ privacy.py / security.py    teks privasi, pembatas percobaan
+                                   ├─ dashboard.py                kalkulasi data dashboard
+                                   ├─ dashboard_server.py + static/  server web baca-saja + login & sesi
+                                   ├─ backup.py                   cadangan harian database
                                    ├─ email_scan.py               IMAP → llm.py
                                    ├─ llm.py                      Ollama atau Claude (+ loop alat)
                                    └─ db.py                       SQLite
@@ -127,6 +146,9 @@ WhatsApp Cloud API) yang memanggil `Service.handle_text` / `read_receipt` / dst.
 - Model lokal 7B bisa salah baca (nominal email, struk kusut). Foto struk selalu minta konfirmasi,
   dan jawaban `/tanya` sebaiknya dicek untuk keputusan penting.
 - Pengingat jatuh tempo mengandalkan tanggal dari email atau input manual; tidak terhubung ke bank.
-- Satu pengguna per chat; belum ada saldo awal atau banyak dompet/rekening.
-- Dashboard hanya untuk melihat dan hanya terbuka di laptop yang menjalankan bot (tidak dari HP).
-  Ubah `DASHBOARD_PORT` bila port 8765 dipakai program lain; `0` mematikannya.
+- Belum ada saldo awal atau banyak dompet/rekening.
+- Dashboard hanya untuk melihat. Akses dari luar server butuh proxy HTTPS (docs/DEPLOY.md); tanpa itu hanya
+  terbuka di mesin yang menjalankan bot. `DASHBOARD_PORT=0` mematikannya.
+- Beta tertutup: belum ada pembayaran/paket, pengingat memakai zona waktu server (WIB), dan baca email hanya admin.
+- **Bukan dokumen hukum**: sebelum menarik bayaran dari publik, tinjau kebijakan privasi/syarat layanan dan
+  kepatuhan UU Pelindungan Data Pribadi bersama ahli hukum.

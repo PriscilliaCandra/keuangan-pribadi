@@ -1,7 +1,8 @@
-"""Adapter Telegram: hanya transport. Semua logika ada di service.py."""
+"""Adapter Telegram: hanya transport. Semua logika ada di service.py / access.py."""
 from __future__ import annotations
 
 import asyncio
+import functools
 import io
 import logging
 import uuid
@@ -9,61 +10,109 @@ from datetime import datetime, time as dtime
 from zoneinfo import ZoneInfo
 
 import httpx
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, LinkPreviewOptions, Update
 from telegram.constants import ChatAction
+from telegram.error import TelegramError
 from telegram.request import HTTPXRequest
 from telegram.ext import (
     Application, ApplicationBuilder, CallbackQueryHandler, CommandHandler,
     ContextTypes, MessageHandler, filters,
 )
 
+from .backup import run_backup
 from .config import Config
 from .parser import ParsedExpense
-from .service import HELP, Service
+from .service import Service
 
 log = logging.getLogger(__name__)
 MAX_PENDING = 20
+MAX_PHOTO_BYTES = 8_000_000  # foto struk lebih besar dari ini ditolak (hemat memori/AI)
+Ctx = ContextTypes.DEFAULT_TYPE
 
 
-def _svc(context: ContextTypes.DEFAULT_TYPE) -> Service:
+def _svc(context: Ctx) -> Service:
     return context.application.bot_data["svc"]
 
 
-def _cfg(context: ContextTypes.DEFAULT_TYPE) -> Config:
+def _cfg(context: Ctx) -> Config:
     return context.application.bot_data["cfg"]
 
 
-async def _allowed(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+def _name(update: Update) -> str:
+    user = update.effective_user
+    return " ".join(p for p in (user.first_name, user.last_name) if p) if user else ""
+
+
+def _private(update: Update) -> bool:
+    """Hanya chat pribadi: di grup, data satu orang akan tampak oleh semua anggota."""
     chat = update.effective_chat
-    if chat is None:
+    return chat is not None and chat.type == "private"
+
+
+async def _allowed(update: Update, context: Ctx) -> bool:
+    if not _private(update):
         return False
-    cfg = _cfg(context)
-    if chat.id in cfg.allowed_chat_ids:
+    svc, chat = _svc(context), update.effective_chat
+    state = await asyncio.to_thread(svc.access.state, chat.id, _name(update))
+    if state == "ok":
         return True
-    if not cfg.allowed_chat_ids and update.effective_message:
-        # Mode setup: bantu user menemukan Chat ID-nya, tapi tidak memproses apa pun.
-        await update.effective_message.reply_text(
-            f"Chat ID kamu: {chat.id}\nTambahkan ke ALLOWED_CHAT_IDS di .env lalu restart bot."
-        )
-    else:
-        log.warning("Chat tidak diizinkan: %s", chat.id)
+    if update.effective_message:
+        await update.effective_message.reply_text(svc.access.gate_message(state, chat.id))
     return False
 
 
 async def _reply(update: Update, text: str, **kw) -> None:
-    await update.effective_message.reply_text(text, **kw)
+    # Tanpa pratinjau tautan: Telegram tidak boleh "mengunjungi" tautan login dashboard.
+    await update.effective_message.reply_text(
+        text, link_preview_options=LinkPreviewOptions(is_disabled=True), **kw)
 
 
-def _args(context: ContextTypes.DEFAULT_TYPE) -> str:
+def _args(context: Ctx) -> str:
     return " ".join(context.args or [])
 
 
-async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if await _allowed(update, context):
-        await _reply(update, HELP)
+# ---------- pendaftaran & privasi (tidak butuh akun aktif) ----------
+async def cmd_start(update: Update, context: Ctx) -> None:
+    if not _private(update):
+        return
+    svc, chat = _svc(context), update.effective_chat
+    state = await asyncio.to_thread(svc.access.state, chat.id, _name(update))
+    if state == "ok":
+        await _reply(update, svc.help_text(chat.id))
+    elif state == "unregistered" and context.args:  # tautan undangan: t.me/bot?start=KODE
+        await _reply(update, await asyncio.to_thread(
+            svc.access.register, chat.id, _name(update), _args(context)))
+    else:
+        await _reply(update, svc.access.gate_message(state, chat.id))
 
 
-async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def cmd_daftar(update: Update, context: Ctx) -> None:
+    if _private(update):
+        chat = update.effective_chat
+        await _reply(update, await asyncio.to_thread(
+            _svc(context).access.register, chat.id, _name(update), _args(context)))
+
+
+async def cmd_setuju(update: Update, context: Ctx) -> None:
+    if _private(update):
+        await _reply(update, await asyncio.to_thread(
+            _svc(context).access.consent, update.effective_chat.id))
+
+
+async def cmd_privasi(update: Update, context: Ctx) -> None:
+    if _private(update):
+        await _reply(update, _svc(context).access.privacy())
+
+
+async def cmd_hapus_akun(update: Update, context: Ctx) -> None:
+    # Hak hapus data: boleh bagi siapa pun yang punya data, termasuk akun yang diblokir.
+    if _private(update):
+        await _reply(update, await asyncio.to_thread(
+            _svc(context).access.delete_account, update.effective_chat.id, _args(context)))
+
+
+# ---------- pesan biasa ----------
+async def on_text(update: Update, context: Ctx) -> None:
     if not await _allowed(update, context):
         return
     text = update.effective_message.text or ""
@@ -75,14 +124,19 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await _reply(update, reply)
 
 
-async def on_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def on_photo(update: Update, context: Ctx) -> None:
     if not await _allowed(update, context):
         return
     svc = _svc(context)
     photo = update.effective_message.photo[-1]
+    if photo.file_size and photo.file_size > MAX_PHOTO_BYTES:
+        await _reply(update, "Fotonya terlalu besar. Kirim foto yang lebih kecil atau ketik manual.")
+        return
+    await update.effective_chat.send_action(ChatAction.TYPING)
     file = await photo.get_file()
     data = bytes(await file.download_as_bytearray())
-    parsed, message = await asyncio.to_thread(svc.read_receipt, data, "image/jpeg")
+    parsed, message = await asyncio.to_thread(svc.read_receipt, update.effective_chat.id, data,
+                                              "image/jpeg")
     if parsed is None:
         await _reply(update, message)
         return
@@ -98,13 +152,13 @@ async def on_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await _reply(update, message, reply_markup=keyboard)
 
 
-async def on_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def on_confirm(update: Update, context: Ctx) -> None:
     query = update.callback_query
     if query is None or not await _allowed(update, context):
         return
     await query.answer()
     action, _, token = (query.data or "").partition(":")
-    parsed = context.chat_data.get("pending", {}).pop(token, None)
+    parsed = context.chat_data.get("pending", {}).pop(token, None)  # chat_data terpisah per chat
     if parsed is None:
         await query.edit_message_text("Struk ini sudah diproses atau kedaluwarsa.")
     elif action == "save":
@@ -117,13 +171,13 @@ async def on_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
 
 def _command(method: str, *, kind: str | None = None):
-    """Buat handler perintah yang meneruskan argumen ke Service.<method>."""
+    """Buat handler perintah yang meneruskan argumen ke Service.<method> (boleh 'access.invite')."""
 
-    async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def handler(update: Update, context: Ctx) -> None:
         if not await _allowed(update, context):
             return
-        svc, chat_id = _svc(context), update.effective_chat.id
-        fn = getattr(svc, method)
+        chat_id = update.effective_chat.id
+        fn = functools.reduce(getattr, method.split("."), _svc(context))
         args = (chat_id, kind, _args(context)) if kind else (chat_id, _args(context))
         await update.effective_chat.send_action(ChatAction.TYPING)  # jawaban AI bisa lama
         await _reply(update, await asyncio.to_thread(fn, *args))
@@ -131,7 +185,7 @@ def _command(method: str, *, kind: str | None = None):
     return handler
 
 
-async def cmd_ekspor(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def cmd_ekspor(update: Update, context: Ctx) -> None:
     if not await _allowed(update, context):
         return
     result = await asyncio.to_thread(_svc(context).export_command, update.effective_chat.id,
@@ -146,7 +200,7 @@ async def cmd_ekspor(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     )
 
 
-async def cmd_scan_email(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def cmd_scan_email(update: Update, context: Ctx) -> None:
     if not await _allowed(update, context):
         return
     await _reply(update, "Memeriksa email…")
@@ -155,34 +209,56 @@ async def cmd_scan_email(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 
 # ---------- jadwal ----------
-async def _broadcast(context: ContextTypes.DEFAULT_TYPE, texts: list[str], chat_id: int) -> None:
+async def _send_all(context: Ctx, chat_id: int, texts: list[str]) -> None:
+    """Kirim ke satu pengguna; kegagalan satu pengguna (mis. memblokir bot) tak menghentikan yang lain."""
     for text in texts:
-        await context.bot.send_message(chat_id, text)
+        try:
+            await context.bot.send_message(chat_id, text)
+        except TelegramError as exc:
+            log.warning("Gagal kirim ke %s: %s", chat_id, exc)
+            return
+        await asyncio.sleep(0.05)  # jauh di bawah batas laju Telegram
 
 
-async def job_daily(context: ContextTypes.DEFAULT_TYPE) -> None:
-    for chat_id in _cfg(context).allowed_chat_ids:
-        texts = await asyncio.to_thread(_svc(context).daily_job, chat_id)
-        await _broadcast(context, texts, chat_id)
+async def job_daily(context: Ctx) -> None:
+    svc = _svc(context)
+    for chat_id in svc.access.active_chat_ids():
+        texts = await asyncio.to_thread(svc.daily_job, chat_id)
+        await _send_all(context, chat_id, texts)
 
 
-async def job_weekly(context: ContextTypes.DEFAULT_TYPE) -> None:
-    tz = ZoneInfo(_cfg(context).timezone)
-    if datetime.now(tz).weekday() != 6:  # hanya hari Minggu
+async def job_weekly(context: Ctx) -> None:
+    if datetime.now(ZoneInfo(_cfg(context).timezone)).weekday() != 6:  # hanya hari Minggu
         return
-    for chat_id in _cfg(context).allowed_chat_ids:
-        text = await asyncio.to_thread(_svc(context).weekly_job, chat_id)
-        await context.bot.send_message(chat_id, text)
+    svc = _svc(context)
+    for chat_id in svc.access.active_chat_ids():
+        text = await asyncio.to_thread(svc.weekly_job, chat_id)
+        await _send_all(context, chat_id, [text])
 
 
-async def job_email(context: ContextTypes.DEFAULT_TYPE) -> None:
-    for chat_id in _cfg(context).allowed_chat_ids:
-        findings = await asyncio.to_thread(_svc(context).scan_email, chat_id)
-        await _broadcast(context, findings, chat_id)
+async def job_email(context: Ctx) -> None:
+    svc = _svc(context)
+    for chat_id in sorted(svc.access.admin_ids):  # satu kotak surat: milik admin
+        findings = await asyncio.to_thread(svc.scan_email, chat_id)
+        await _send_all(context, chat_id, findings)
 
 
-async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def job_backup(context: Ctx) -> None:
+    cfg = _cfg(context)
+    try:
+        path = await asyncio.to_thread(run_backup, _svc(context).db, cfg.backup_dir, cfg.backup_keep)
+        log.info("Cadangan database: %s", path)
+    except OSError as exc:
+        log.error("Cadangan database GAGAL: %s", exc)
+
+
+async def on_error(update: object, context: Ctx) -> None:
     log.exception("Error tak tertangani", exc_info=context.error)
+
+
+async def _on_start(app: Application) -> None:
+    me = await app.bot.get_me()
+    app.bot_data["svc"].access.bot_username = me.username  # untuk tautan undangan
 
 
 def build_app(cfg: Config, svc: Service) -> Application:
@@ -192,10 +268,22 @@ def build_app(cfg: Config, svc: Service) -> Application:
                            pool_timeout=20, httpx_kwargs=ipv4)
     polling_request = HTTPXRequest(connect_timeout=20, read_timeout=40, httpx_kwargs=ipv4)
     app = (ApplicationBuilder().token(cfg.telegram_token)
-           .request(request).get_updates_request(polling_request).build())
+           .request(request).get_updates_request(polling_request)
+           .post_init(_on_start).build())
     app.bot_data.update(cfg=cfg, svc=svc)
 
     app.add_handler(CommandHandler(["start", "bantuan", "help"], cmd_start))
+    app.add_handler(CommandHandler("daftar", cmd_daftar))
+    app.add_handler(CommandHandler("setuju", cmd_setuju))
+    app.add_handler(CommandHandler("privasi", cmd_privasi))
+    app.add_handler(CommandHandler("hapus_akun", cmd_hapus_akun))
+    # admin (dicek lagi di AccessControl: bukan admin -> "khusus admin")
+    app.add_handler(CommandHandler("undang", _command("access.invite")))
+    app.add_handler(CommandHandler("pengguna", _command("access.users")))
+    app.add_handler(CommandHandler("blokir", _command("access.block")))
+    app.add_handler(CommandHandler("aktifkan", _command("access.unblock")))
+    app.add_handler(CommandHandler("statistik", _command("access.stats")))
+    # fitur utama
     app.add_handler(CommandHandler("hapus", _command("delete_command")))
     app.add_handler(CommandHandler("masuk", _command("income_command")))
     app.add_handler(CommandHandler("saldo", _command("saldo_command")))
@@ -219,6 +307,7 @@ def build_app(cfg: Config, svc: Service) -> Application:
     tz = ZoneInfo(cfg.timezone)
     app.job_queue.run_daily(job_daily, time=dtime(8, 0, tzinfo=tz), name="harian")
     app.job_queue.run_daily(job_weekly, time=dtime(19, 0, tzinfo=tz), name="mingguan")
+    app.job_queue.run_daily(job_backup, time=dtime(3, 30, tzinfo=tz), name="cadangan")
     if cfg.email_enabled:
         app.job_queue.run_repeating(job_email, interval=cfg.email_scan_hours * 3600,
                                     first=60, name="email")

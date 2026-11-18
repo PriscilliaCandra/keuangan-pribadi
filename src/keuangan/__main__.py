@@ -6,29 +6,31 @@ import sys
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from pathlib import Path
-
+from .access import AccessControl
 from .bot import build_app
-from .config import ConfigError, load_config
-from .dashboard import DashboardServer, load_or_create_token
+from .config import Config, ConfigError, load_config
+from .dashboard_server import DashboardServer
 from .db import Database
 from .email_scan import make_imap_fetcher
 from .llm import make_llm
 from .service import Service
 
 
-def start_dashboard(cfg, db, clock) -> str | None:
-    """Nyalakan dashboard lokal; kembalikan tautan masuk, atau None bila mati/gagal."""
+def start_dashboard(cfg: Config, db: Database, access: AccessControl, clock) -> str | None:
+    """Nyalakan dashboard; kembalikan alamat dasar untuk tautan login, atau None bila mati/gagal."""
     if not cfg.dashboard_port:
         return None
-    token = cfg.dashboard_token or load_or_create_token(Path(cfg.db_path).with_name("dashboard_token"))
+    base = cfg.dashboard_base_url
     try:
-        server = DashboardServer(db, cfg.allowed_chat_ids, clock, token, cfg.dashboard_port)
+        server = DashboardServer(
+            db, access.accounts, clock, port=cfg.dashboard_port,
+            extra_hosts=cfg.dashboard_host_names, secure_cookie=base.startswith("https://"),
+            session_ttl=cfg.dashboard_session_days * 86400, trust_proxy=cfg.dashboard_trust_proxy)
     except OSError as exc:  # mis. port dipakai program lain: bot tetap jalan tanpa dashboard
         logging.getLogger(__name__).warning("Dashboard tidak aktif (port %s): %s", cfg.dashboard_port, exc)
         return None
     server.start()
-    return server.url()
+    return base
 
 
 def main() -> int:
@@ -54,12 +56,15 @@ def main() -> int:
                           cfg.imap_folder, cfg.email_lookback_days, clock, db.email_seen)
         if cfg.email_enabled else None
     )
-    svc = Service(db, llm, clock, cfg.reminder_days, fetcher)
-    svc.dashboard_url = start_dashboard(cfg, db, clock)
+    access = AccessControl(db, cfg.admin_chat_ids, cfg.ai_privacy_note, cfg.ai_daily_limit,
+                           cfg.ai_max_concurrent, cfg.ai_wait_seconds, clock)
+    svc = Service(db, llm, clock, cfg.reminder_days, fetcher, access)
+    svc.dashboard_base_url = start_dashboard(cfg, db, access, clock)
 
     logging.getLogger(__name__).info(
-        "Siap. AI=%s, scan email=%s, chat diizinkan=%d",
-        cfg.llm_label, "on" if fetcher else "off", len(cfg.allowed_chat_ids),
+        "Siap. AI=%s, scan email=%s, admin=%d, dashboard=%s, kuota AI=%d/hari",
+        cfg.llm_label, "on" if fetcher else "off", len(cfg.admin_chat_ids),
+        "on" if svc.dashboard_base_url else "off", cfg.ai_daily_limit,
     )
     # bootstrap_retries=-1: kalau internet putus saat start, coba lagi terus (bukan langsung mati)
     build_app(cfg, svc).run_polling(bootstrap_retries=-1)

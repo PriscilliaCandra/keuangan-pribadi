@@ -71,7 +71,54 @@ CREATE TABLE IF NOT EXISTS processed_emails (
   chat_id INTEGER NOT NULL,
   processed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS users (
+  chat_id INTEGER PRIMARY KEY,
+  display_name TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL CHECK (status IN ('pending', 'active', 'blocked')),
+  role TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('user', 'admin')),
+  invite_code TEXT,
+  consent_version TEXT,
+  consent_at TEXT,
+  created_at TEXT NOT NULL,
+  last_seen TEXT
+);
+
+CREATE TABLE IF NOT EXISTS invites (
+  code TEXT PRIMARY KEY,
+  created_by INTEGER NOT NULL,
+  note TEXT NOT NULL DEFAULT '',
+  max_uses INTEGER NOT NULL DEFAULT 1 CHECK (max_uses > 0),
+  uses INTEGER NOT NULL DEFAULT 0,
+  expires_at TEXT,
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS ai_usage (
+  chat_id INTEGER NOT NULL,
+  day TEXT NOT NULL,
+  calls INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (chat_id, day)
+);
+
+CREATE TABLE IF NOT EXISTS login_tokens (
+  token_hash TEXT PRIMARY KEY,
+  chat_id INTEGER NOT NULL,
+  expires_at TEXT NOT NULL,
+  used INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS sessions (
+  session_hash TEXT PRIMARY KEY,
+  chat_id INTEGER NOT NULL,
+  expires_at TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
 """
+
+# Tabel yang berisi data milik pengguna (kunci chat_id): dihapus saat pengguna minta hapus akun.
+USER_DATA_TABLES = ("expenses", "incomes", "budgets", "budget_alerts", "bills",
+                    "processed_emails", "ai_usage", "login_tokens", "sessions", "users")
 
 
 @dataclass
@@ -126,9 +173,44 @@ class Database:
         self._lock = threading.RLock()
         self._last_stamp: datetime | None = None
         with self._lock:
+            self._conn.execute("PRAGMA busy_timeout = 5000")
+            if path != ":memory:":
+                self._conn.execute("PRAGMA journal_mode = WAL")  # baca tak memblokir tulis
             self._conn.executescript(SCHEMA)
             self._migrate()
             self._conn.commit()
+
+    # ---------- pembantu umum (dipakai accounts.py) ----------
+    def execute(self, sql: str, params: tuple | list = ()) -> sqlite3.Cursor:
+        """Jalankan satu perintah tulis di dalam kunci lalu commit. Nilai selalu lewat `params`."""
+        with self._lock:
+            cur = self._conn.execute(sql, params)
+            self._conn.commit()
+            return cur
+
+    def query(self, sql: str, params: tuple | list = ()) -> list[sqlite3.Row]:
+        with self._lock:
+            return self._conn.execute(sql, params).fetchall()
+
+    def delete_chat_data(self, chat_id: int) -> dict[str, int]:
+        """Hapus SEMUA data satu pengguna (hak hapus data). Mengembalikan jumlah baris per tabel."""
+        counts: dict[str, int] = {}
+        with self._lock:
+            for table in USER_DATA_TABLES:  # nama tabel dari konstanta, bukan input
+                counts[table] = self._conn.execute(
+                    f"DELETE FROM {table} WHERE chat_id=?", (chat_id,)).rowcount
+            self._conn.commit()
+        return counts
+
+    def backup_to(self, dest_path: str) -> None:
+        """Salinan konsisten database yang sedang dipakai (aman dijalankan saat bot hidup)."""
+        Path(dest_path).parent.mkdir(parents=True, exist_ok=True)
+        dest = sqlite3.connect(dest_path)
+        try:
+            with self._lock:
+                self._conn.backup(dest)
+        finally:
+            dest.close()
 
     def _migrate(self) -> None:
         """Migrasi ringan untuk database yang dibuat versi lama."""

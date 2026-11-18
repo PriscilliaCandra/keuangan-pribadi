@@ -2,6 +2,7 @@ from datetime import date, timedelta
 
 import pytest
 
+from keuangan.access import AccessControl
 from keuangan.llm import LlmError, extract_json
 from keuangan.service import Service, receipt_to_expense
 from tests.conftest import CHAT, TODAY
@@ -116,8 +117,16 @@ def test_daily_job_monthly_review_on_first(db):
     assert any("masih dipakai" in m.lower() for m in out)
 
 
-def test_scan_email_disabled_message(svc):
-    assert "belum aktif" in svc.scan_email(CHAT)[0]
+def test_scan_email_disabled_message(db):
+    admin = Service(db, None, clock=lambda: TODAY, access=AccessControl(db, frozenset({CHAT})))
+    assert "belum aktif" in admin.scan_email(CHAT)[0]
+
+
+def test_scan_email_is_admin_only(db):
+    s = Service(db, FakeLlm(), clock=lambda: TODAY, email_fetcher=lambda: [],
+                access=AccessControl(db, frozenset({99})))
+    assert "belum tersedia" in s.scan_email(CHAT)[0]       # pengguna biasa
+    assert s.scan_email(99) == []                           # admin: berjalan (tak ada email)
 
 
 # ---------- struk ----------
@@ -151,12 +160,12 @@ def test_receipt_sanitizes_date_and_category():
 
 def test_read_receipt_paths(db):
     no_llm = Service(db, None, clock=lambda: TODAY)
-    assert no_llm.read_receipt(b"x")[0] is None
+    assert no_llm.read_receipt(CHAT, b"x")[0] is None
     ok = Service(db, FakeLlm(receipt=good()), clock=lambda: TODAY)
-    parsed, msg = ok.read_receipt(b"x")
+    parsed, msg = ok.read_receipt(CHAT, b"x")
     assert parsed.amount == 85_000 and "Simpan?" in msg
-    assert Service(db, FakeLlm(receipt={"is_receipt": False}), clock=lambda: TODAY).read_receipt(b"x")[0] is None
-    assert Service(db, FakeLlm(error=True), clock=lambda: TODAY).read_receipt(b"x")[0] is None
+    assert Service(db, FakeLlm(receipt={"is_receipt": False}), clock=lambda: TODAY).read_receipt(CHAT, b"x")[0] is None
+    assert Service(db, FakeLlm(error=True), clock=lambda: TODAY).read_receipt(CHAT, b"x")[0] is None
 
 
 def test_extract_json_tolerates_wrapping():
@@ -175,7 +184,8 @@ def test_scan_email_rejects_concurrent_runs(db):
         release.wait(5)
         return []
 
-    s = Service(db, FakeLlm(), clock=lambda: TODAY, email_fetcher=slow_fetch)
+    s = Service(db, FakeLlm(), clock=lambda: TODAY, email_fetcher=slow_fetch,
+                access=AccessControl(db, frozenset({CHAT})))
     first = []
     t = threading.Thread(target=lambda: first.append(s.scan_email(CHAT)))
     t.start()
@@ -186,9 +196,14 @@ def test_scan_email_rejects_concurrent_runs(db):
     assert first == [[]]
 
 
-def test_dashboard_command(db):
+def test_dashboard_command_issues_single_use_login_link(db):
     s = Service(db, None, clock=lambda: TODAY)
     assert "tidak aktif" in s.dashboard_command(CHAT)
-    s.dashboard_url = "http://localhost:8765/?t=abc"
+    s.dashboard_base_url = "http://localhost:8765"
     out = s.dashboard_command(CHAT)
-    assert "http://localhost:8765/?t=abc" in out and "Jangan bagikan" in out
+    token = out.split("/?t=")[1].split()[0]
+    assert "sekali pakai" in out and "10 menit" in out
+    assert s.access.accounts.consume_login_token(token) == CHAT   # token milik pemintanya
+    assert s.access.accounts.consume_login_token(token) is None   # tidak bisa dipakai dua kali
+    # setiap permintaan menghasilkan token baru yang berbeda
+    assert s.dashboard_command(CHAT) != out

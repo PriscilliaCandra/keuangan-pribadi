@@ -54,9 +54,9 @@ def test_bad_chat_id():
 def test_dashboard_defaults_and_overrides():
     base = {"TELEGRAM_BOT_TOKEN": "t"}
     cfg = load_config(base)
-    assert cfg.dashboard_port == 8765 and cfg.dashboard_token is None
-    cfg = load_config({**base, "DASHBOARD_PORT": "0", "DASHBOARD_TOKEN": " rahasia "})
-    assert cfg.dashboard_port == 0 and cfg.dashboard_token == "rahasia"
+    assert cfg.dashboard_port == 8765 and cfg.dashboard_public_url is None
+    cfg = load_config({**base, "DASHBOARD_PORT": "0", "DASHBOARD_PUBLIC_URL": "https://uang.contoh.id/"})
+    assert cfg.dashboard_port == 0 and cfg.dashboard_public_url == "https://uang.contoh.id"
 
 
 @pytest.mark.parametrize("value", ["abc", "-1", "70000"])

@@ -39,7 +39,10 @@
     const url = new URL(path, location.origin);
     for (const [k, v] of Object.entries(params || {})) if (v !== "" && v != null) url.searchParams.set(k, v);
     const res = await fetch(url, { credentials: "same-origin", cache: "no-store" });
-    if (res.status === 401) throw new Error("Sesi tidak valid. Buka lagi tautan dari perintah /dashboard di Telegram.");
+    if (res.status === 401) {  // sesi habis/dicabut: kembali ke halaman masuk
+      document.getElementById("content").hidden = true;
+      throw new Error("Sesi berakhir. Kirim /dashboard di Telegram untuk tautan masuk baru.");
+    }
     const body = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(body.error || `Galat ${res.status}`);
     return body;
@@ -294,6 +297,13 @@
     if (!showTable && state.data) renderSeries(state.data);  // lebar benar setelah tampil lagi
     e.target.setAttribute("aria-pressed", String(showTable));
     e.target.textContent = showTable ? "Lihat sebagai grafik" : "Lihat sebagai tabel";
+  });
+
+  $("#logout").addEventListener("click", async () => {
+    try {
+      await fetch("/api/logout", { method: "POST", credentials: "same-origin",
+        headers: { "Content-Type": "application/json" }, body: "{}" });
+    } finally { location.replace("/"); }
   });
 
   // tema terang/gelap: ikut sistem, bisa diganti dan diingat (penyimpanan boleh gagal)
