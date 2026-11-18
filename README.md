@@ -21,6 +21,15 @@ atau Claude.
   `berapa sisa uangku?`. Pertanyaan yang diketik langsung (diawali "berapa", "apa", "bulan apa", atau
   berakhiran `?`) otomatis dijawab agen.
 
+**Dashboard web (hanya-baca, hanya di laptop tempat bot berjalan)**
+- Kirim `/dashboard` di Telegram, lalu buka tautannya di browser laptop.
+- Kartu selisih/pemasukan/pengeluaran/persen ditabung (dengan perbandingan periode sebelumnya),
+  grafik kolom pemasukan vs pengeluaran (harian atau bulanan), batang kategori pengeluaran dan
+  pemasukan (klik untuk memfilter transaksi), meter anggaran, daftar tagihan, dan tabel transaksi
+  dengan filter. Ada tampilan tabel, tooltip, mode terang/gelap, dan layout ponsel.
+- Kategori pemasukan: Gaji, Bonus & THR, Freelance & Usaha, Investasi, Lainnya (terisi otomatis dari
+  kata kunci, bisa dikoreksi dengan reply atau `/edit m1 kategori bonus`).
+
 **Merapikan**
 - **Koreksi langsung di chat**: balas (reply) pesan "Dicatat…" dari bot dengan `transportasi`, `40rb`,
   `kemarin`, atau gabungan (`40rb kemarin transport`); balas `hapus` untuk menghapusnya. Tanpa reply,
@@ -50,6 +59,7 @@ atau Claude.
 | `/hapus` · `/hapus <id>` | hapus catatan terakhir / per ID |
 | `/ekspor [semua\|2026-10]` | unduh CSV |
 | `/tanya <pertanyaan>` | tanya data keuanganmu |
+| `/dashboard` | tautan dashboard web (hanya laptop ini) |
 | `/anggaran` · `/anggaran makanan 1,5jt` · `/anggaran total 5jt` · `/anggaran hapus makanan` | anggaran |
 | `/ringkasan` · `/ringkasan bulan` | ringkasan 7 hari / bulan ini |
 | `/tagihan` · `/langganan` | daftar, atau tambah dengan argumen |
@@ -87,6 +97,11 @@ Test: `pip install -r requirements-dev.txt && pytest`
 - Agen `/tanya` hanya punya **alat baca-saja** yang terkunci ke chat-mu; tidak ada alat untuk mengubah, menghapus, membayar, atau mengirim. Argumen alat dari model divalidasi dan dibatasi.
 - Ekspor CSV menetralkan *formula injection* (sel yang diawali `= + - @`).
 - Bot hanya merespons `ALLOWED_CHAT_IDS`.
+- **Dashboard**: hanya mendengarkan `127.0.0.1`, wajib token (cookie HttpOnly + SameSite=Strict),
+  memeriksa header `Host` (anti DNS-rebinding), hanya metode GET/HEAD, berkas statis dari daftar putih,
+  CSP ketat tanpa skrip/gaya inline atau sumber luar, tanpa pustaka pihak ketiga (grafik SVG buatan
+  sendiri), dan semua teks dari data dipasang dengan `textContent`. Data chat lain tidak bisa dibaca.
+  Token acak disimpan di `data/dashboard_token`; jangan bagikan tautannya.
 
 ## Arsitektur
 
@@ -97,6 +112,7 @@ bot.py (Telegram, jadwal)  ──►  service.py (semua logika, bebas kanal)
                                    ├─ budget.py / reports.py      anggaran & ringkasan
                                    ├─ bills.py                    tagihan, langganan
                                    ├─ agent.py                    alat baca-saja untuk /tanya
+                                   ├─ dashboard.py + static/      dashboard web lokal (baca-saja)
                                    ├─ email_scan.py               IMAP → llm.py
                                    ├─ llm.py                      Ollama atau Claude (+ loop alat)
                                    └─ db.py                       SQLite
@@ -112,3 +128,5 @@ WhatsApp Cloud API) yang memanggil `Service.handle_text` / `read_receipt` / dst.
   dan jawaban `/tanya` sebaiknya dicek untuk keputusan penting.
 - Pengingat jatuh tempo mengandalkan tanggal dari email atau input manual; tidak terhubung ke bank.
 - Satu pengguna per chat; belum ada saldo awal atau banyak dompet/rekening.
+- Dashboard hanya untuk melihat dan hanya terbuka di laptop yang menjalankan bot (tidak dari HP).
+  Ubah `DASHBOARD_PORT` bila port 8765 dipakai program lain; `0` mematikannya.

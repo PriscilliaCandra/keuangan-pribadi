@@ -30,6 +30,8 @@ class Config:
     imap_folder: str
     email_scan_hours: int
     email_lookback_days: int
+    dashboard_port: int  # 0 = dashboard dimatikan
+    dashboard_token: str | None  # kosong = dibuat acak & disimpan di samping database
 
     @property
     def llm_enabled(self) -> bool:
@@ -60,6 +62,16 @@ def _ids(raw: str) -> frozenset[int]:
             except ValueError as exc:
                 raise ConfigError(f"ALLOWED_CHAT_IDS berisi nilai bukan angka: {part!r}") from exc
     return frozenset(out)
+
+
+def _port(raw: str) -> int:
+    try:
+        port = int(raw.strip() or "0")
+    except ValueError as exc:
+        raise ConfigError(f"DASHBOARD_PORT bukan angka: {raw!r}") from exc
+    if not 0 <= port <= 65535:
+        raise ConfigError("DASHBOARD_PORT harus 0-65535 (0 = matikan dashboard)")
+    return port
 
 
 def _choose_provider(explicit: str, api_key: str | None, ollama_model: str | None) -> str | None:
@@ -106,4 +118,6 @@ def load_config(env: Mapping[str, str] | None = None) -> Config:
         imap_folder=env.get("IMAP_FOLDER", "INBOX"),
         email_scan_hours=int(env.get("EMAIL_SCAN_EVERY_HOURS", "6")),
         email_lookback_days=int(env.get("EMAIL_LOOKBACK_DAYS", "45")),
+        dashboard_port=_port(env.get("DASHBOARD_PORT", "8765")),
+        dashboard_token=env.get("DASHBOARD_TOKEN", "").strip() or None,
     )

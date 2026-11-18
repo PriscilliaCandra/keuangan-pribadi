@@ -184,3 +184,11 @@ def test_scan_email_rejects_concurrent_runs(db):
     release.set()
     t.join()
     assert first == [[]]
+
+
+def test_dashboard_command(db):
+    s = Service(db, None, clock=lambda: TODAY)
+    assert "tidak aktif" in s.dashboard_command(CHAT)
+    s.dashboard_url = "http://localhost:8765/?t=abc"
+    out = s.dashboard_command(CHAT)
+    assert "http://localhost:8765/?t=abc" in out and "Jangan bagikan" in out

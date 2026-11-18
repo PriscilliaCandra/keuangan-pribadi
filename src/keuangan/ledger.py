@@ -6,12 +6,10 @@ import io
 import re
 from datetime import date
 
-from .categories import CATEGORIES, match_category
+from .categories import CATEGORIES, INCOME_CATEGORIES, match_category, match_income_category
 from .db import Database, Expense, Income
 from .formatting import rupiah, tanggal
 from .parser import find_amount, parse_date_text
-
-INCOME_LABEL = "Pemasukan"
 
 
 # ---------- arus kas ----------
@@ -43,7 +41,7 @@ def ref_token(kind: str, entry: Expense | Income) -> str:
 def format_entry(kind: str, entry: Expense | Income) -> str:
     if kind == "masuk":
         return (f"{ref_token(kind, entry):>4} · {tanggal(entry.received_on)} · 💵 +{rupiah(entry.amount)}"
-                f" · {entry.description}")
+                f" · {entry.description} ({entry.category})")
     return (f"{ref_token(kind, entry):>4} · {tanggal(entry.spent_on)} · {rupiah(entry.amount)}"
             f" · {entry.description} ({entry.category})")
 
@@ -125,11 +123,10 @@ def apply_edits(db: Database, chat_id: int, ref_text: str, pairs: list[tuple[str
         if field is None or not value:
             return EDIT_HELP
         if field == "category":
-            if kind == "masuk":
-                return "Pemasukan tidak punya kategori. Ubah nominal, tanggal, atau catatan."
-            category = match_category(value)
+            pool = INCOME_CATEGORIES if kind == "masuk" else CATEGORIES
+            category = (match_income_category if kind == "masuk" else match_category)(value)
             if category is None:
-                return "Kategori tidak dikenal. Pilihan: " + ", ".join(CATEGORIES)
+                return "Kategori tidak dikenal. Pilihan: " + ", ".join(pool)
             changes["category"] = category
             shown.append(f"kategori → {category}")
         elif field == "amount":
@@ -170,7 +167,7 @@ def export_csv(db: Database, chat_id: int, start: date, end_exclusive: date) -> 
                                         e.category, _csv_safe(e.description), e.source]))
     for i in db.incomes_between(chat_id, start, end_exclusive):
         rows.append((i.received_on, i.id, ["masuk", f"m{i.id}", i.received_on.isoformat(),
-                                           i.amount, INCOME_LABEL, _csv_safe(i.description),
+                                           i.amount, i.category, _csv_safe(i.description),
                                            i.source]))
     rows.sort(key=lambda r: (r[0], r[2][0], r[1]))
     buf = io.StringIO()

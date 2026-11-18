@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>Keuangan Pribadi</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div class="page">
+    <header class="top">
+      <h1>Keuangan Pribadi</h1>
+      <div class="filters" role="group" aria-label="Periode">
+        <div id="periods" class="seg"></div>
+        <button id="theme" class="icon-btn" type="button" aria-label="Ganti tema terang/gelap">◐</button>
+      </div>
+    </header>
+
+    <p id="status" class="status" role="status" aria-live="polite"></p>
+
+    <main id="content" class="content">
+      <section class="kpis" aria-label="Ringkasan">
+        <div class="hero">
+          <div class="label" id="hero-label">Selisih</div>
+          <div class="hero-value" id="hero-value">–</div>
+          <div class="delta" id="hero-sub"></div>
+        </div>
+        <div class="tile"><div class="label">Pemasukan</div><div class="value" id="kpi-income">–</div><div class="delta" id="kpi-income-d"></div></div>
+        <div class="tile"><div class="label">Pengeluaran</div><div class="value" id="kpi-expense">–</div><div class="delta" id="kpi-expense-d"></div></div>
+        <div class="tile"><div class="label">Ditabung</div><div class="value" id="kpi-rate">–</div><div class="delta" id="kpi-count"></div></div>
+      </section>
+
+      <section class="card" aria-labelledby="t-series">
+        <div class="card-head">
+          <h2 id="t-series">Pemasukan dan pengeluaran</h2>
+          <div class="legend" aria-hidden="true">
+            <span><i class="key income"></i>Pemasukan</span>
+            <span><i class="key expense"></i>Pengeluaran</span>
+          </div>
+          <button id="toggle-table" class="link-btn" type="button" aria-pressed="false">Lihat sebagai tabel</button>
+        </div>
+        <div id="series-chart" class="chart"></div>
+        <div id="series-table" class="table-wrap" hidden></div>
+      </section>
+
+      <div class="two">
+        <section class="card" aria-labelledby="t-exp">
+          <div class="card-head"><h2 id="t-exp">Pengeluaran per kategori</h2></div>
+          <div id="exp-cats" class="ranks"></div>
+        </section>
+        <section class="card" aria-labelledby="t-inc">
+          <div class="card-head"><h2 id="t-inc">Pemasukan per kategori</h2></div>
+          <div id="inc-cats" class="ranks"></div>
+        </section>
+      </div>
+
+      <div class="two">
+        <section class="card" aria-labelledby="t-bud">
+          <div class="card-head"><h2 id="t-bud">Anggaran bulan ini</h2></div>
+          <div id="budgets" class="meters"></div>
+        </section>
+        <section class="card" aria-labelledby="t-bill">
+          <div class="card-head"><h2 id="t-bill">Tagihan dan langganan</h2><span id="bill-total" class="muted"></span></div>
+          <div id="bills" class="bills"></div>
+        </section>
+      </div>
+
+      <section class="card" aria-labelledby="t-tx">
+        <div class="card-head"><h2 id="t-tx">Transaksi</h2></div>
+        <div class="tx-filters">
+          <label>Jenis
+            <select id="f-kind">
+              <option value="semua">Semua</option>
+              <option value="keluar">Pengeluaran</option>
+              <option value="masuk">Pemasukan</option>
+            </select>
+          </label>
+          <label>Kategori
+            <select id="f-cat"><option value="">Semua</option></select>
+          </label>
+          <label class="grow">Cari
+            <input id="f-q" type="search" maxlength="60" placeholder="catatan atau kategori" autocomplete="off">
+          </label>
+        </div>
+        <div class="table-wrap">
+          <table class="tx">
+            <thead><tr><th>Tanggal</th><th>Catatan</th><th>Kategori</th><th class="num">Jumlah</th></tr></thead>
+            <tbody id="tx-body"></tbody>
+          </table>
+        </div>
+        <div class="pager">
+          <span id="pager-info" class="muted"></span>
+          <span>
+            <button id="prev" type="button" class="btn">Sebelumnya</button>
+            <button id="next" type="button" class="btn">Berikutnya</button>
+          </span>
+        </div>
+      </section>
+    </main>
+
+    <footer class="foot">Hanya-baca · data dari laptop ini · ubah catatan lewat Telegram</footer>
+  </div>
+  <div id="tip" class="tip" role="tooltip" hidden></div>
+  <script src="/app.js"></script>
+</body>
+</html>

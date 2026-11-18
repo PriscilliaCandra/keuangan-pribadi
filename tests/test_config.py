@@ -49,3 +49,17 @@ def test_ollama_enables_email_scan():
 def test_bad_chat_id():
     with pytest.raises(ConfigError):
         load_config({"TELEGRAM_BOT_TOKEN": "t", "ALLOWED_CHAT_IDS": "abc"})
+
+
+def test_dashboard_defaults_and_overrides():
+    base = {"TELEGRAM_BOT_TOKEN": "t"}
+    cfg = load_config(base)
+    assert cfg.dashboard_port == 8765 and cfg.dashboard_token is None
+    cfg = load_config({**base, "DASHBOARD_PORT": "0", "DASHBOARD_TOKEN": " rahasia "})
+    assert cfg.dashboard_port == 0 and cfg.dashboard_token == "rahasia"
+
+
+@pytest.mark.parametrize("value", ["abc", "-1", "70000"])
+def test_dashboard_port_validation(value):
+    with pytest.raises(ConfigError):
+        load_config({"TELEGRAM_BOT_TOKEN": "t", "DASHBOARD_PORT": value})

@@ -5,7 +5,7 @@ import re
 from dataclasses import dataclass
 from datetime import date, timedelta
 
-from .categories import guess_category
+from .categories import guess_category, guess_income_category
 
 _NUM = re.compile(
     r"(?<![\w.,])(rp\.?\s*)?(\d{1,3}(?:[.,]\d{3})+|\d+(?:[.,]\d+)?)\s*(juta|jt|ribu|rb|k)?(?![a-z\d])",
@@ -107,6 +107,7 @@ class ParsedIncome:
     amount: int
     description: str
     received_on: date
+    category: str = "Lainnya"
 
 
 def is_income_text(text: str) -> bool:
@@ -125,7 +126,8 @@ def parse_income(text: str, today: date, force: bool = False) -> ParsedIncome | 
     rest = rest[:start] + " " + rest[end:]
     rest = re.sub(r"^\s*\+\s*", "", rest)
     description = re.sub(r"\s+", " ", rest).strip(" -:,.") or "Pemasukan"
-    return ParsedIncome(amount, description[:120], received_on)
+    return ParsedIncome(amount, description[:120], received_on,
+                        guess_income_category(text))  # kata kunci dicari di seluruh kalimat
 
 
 # ---------- tanggal untuk /edit ----------
@@ -218,7 +220,7 @@ def _field_pairs(rest: str) -> list[tuple[str, str]]:
 
 def _pure_value_pairs(rest: str) -> list[tuple[str, str]]:
     """'40rb kemarin transportasi' -> nominal, tanggal, kategori. Kata tak dikenal = bukan koreksi."""
-    from .categories import exact_category
+    from .categories import exact_category, exact_income_category
 
     pairs: list[tuple[str, str]] = []
     remaining = rest
@@ -233,10 +235,11 @@ def _pure_value_pairs(rest: str) -> list[tuple[str, str]]:
         remaining = remaining[:start] + " " + remaining[end:]
     remaining = re.sub(r"\s+", " ", remaining).strip(" ,.:")
     if remaining:
-        category = exact_category(remaining)
-        if category is None:
+        # Nilai disimpan apa adanya; apply_edits memetakannya sesuai jenis catatan
+        # (kategori pengeluaran atau pemasukan).
+        if exact_category(remaining) is None and exact_income_category(remaining) is None:
             return []
-        pairs.append(("kategori", category))
+        pairs.append(("kategori", remaining))
     return pairs
 
 

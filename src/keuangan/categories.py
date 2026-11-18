@@ -87,6 +87,54 @@ def guess_category(text: str) -> str | None:
     return None
 
 
+# ---------- kategori pemasukan ----------
+INCOME_CATEGORIES = ["Gaji", "Bonus & THR", "Freelance & Usaha", "Investasi", LAINNYA]
+
+_INCOME_KEYWORDS: dict[str, list[str]] = {
+    "Gaji": ["gaji", "salary", "upah", "payroll"],
+    "Bonus & THR": ["bonus", "thr", "insentif", "tunjangan"],
+    "Freelance & Usaha": ["freelance", "honor", "komisi", "fee", "proyek", "project", "jualan",
+                          "omzet", "usaha", "dagang", "jasa"],
+    "Investasi": ["dividen", "bunga", "investasi", "saham", "reksadana", "kupon", "profit"],
+}
+_INCOME_PATTERNS = {
+    cat: re.compile(r"\b(?:" + "|".join(re.escape(k) for k in kws) + r")\b", re.I)
+    for cat, kws in _INCOME_KEYWORDS.items()
+}
+_INCOME_ALIASES = {
+    "gaji": "Gaji", "bonus": "Bonus & THR", "thr": "Bonus & THR",
+    "freelance": "Freelance & Usaha", "usaha": "Freelance & Usaha", "bisnis": "Freelance & Usaha",
+    "investasi": "Investasi", "dividen": "Investasi",
+    "lainnya": LAINNYA, "lain": LAINNYA,
+}
+
+
+def guess_income_category(text: str) -> str:
+    """Kategori pemasukan dari kata kunci; 'Lainnya' bila tidak ada yang cocok."""
+    for cat, pattern in _INCOME_PATTERNS.items():
+        if pattern.search(text):
+            return cat
+    return LAINNYA
+
+
+def exact_income_category(word: str) -> str | None:
+    w = word.strip().lower()
+    if w in _INCOME_ALIASES:
+        return _INCOME_ALIASES[w]
+    return next((c for c in INCOME_CATEGORIES if c.lower() == w), None)
+
+
+def match_income_category(word: str) -> str | None:
+    """Alias, nama persis, atau awalan nama kategori pemasukan ('free' -> Freelance & Usaha)."""
+    w = word.strip().lower()
+    if not w:
+        return None
+    exact = exact_income_category(w)
+    if exact:
+        return exact
+    return next((c for c in INCOME_CATEGORIES if c.lower().startswith(w)), None)
+
+
 def exact_category(word: str) -> str | None:
     """Kategori hanya bila kata persis nama kategori atau aliasnya (tanpa tebakan awalan)."""
     w = word.strip().lower()

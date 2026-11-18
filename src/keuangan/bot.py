@@ -203,6 +203,7 @@ def build_app(cfg: Config, svc: Service) -> Application:
     app.add_handler(CommandHandler("edit", _command("edit_command")))
     app.add_handler(CommandHandler("ekspor", cmd_ekspor))
     app.add_handler(CommandHandler("tanya", _command("ask_command")))
+    app.add_handler(CommandHandler("dashboard", _command("dashboard_command")))
     app.add_handler(CommandHandler("anggaran", _command("budget_command")))
     app.add_handler(CommandHandler("ringkasan", _command("summary_command")))
     app.add_handler(CommandHandler("tagihan", _command("bills_command", kind="tagihan")))

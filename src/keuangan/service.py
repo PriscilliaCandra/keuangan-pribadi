@@ -33,6 +33,7 @@ HELP = """Halo! Aku pencatat keuanganmu.
 🗑️ "hapus yang tadi" · /hapus — catatan terakhir · /hapus 12 — per ID
 📤 /ekspor — CSV bulan ini · /ekspor semua · /ekspor 2026-10
 🤖 /tanya berapa pengeluaran kopi bulan ini? (atau ketik pertanyaannya langsung)
+📈 /dashboard — grafik pemasukan & pengeluaran (dibuka di laptop)
 
 💰 /anggaran — lihat anggaran
    /anggaran makanan 1,5jt — atur anggaran per kategori
@@ -84,6 +85,14 @@ class Service:
         self.reminder_days = reminder_days
         self.email_fetcher = email_fetcher
         self._scan_lock = threading.Lock()  # satu pemindaian email pada satu waktu
+        self.dashboard_url: str | None = None  # diisi saat dashboard lokal menyala
+
+    def dashboard_command(self, chat_id: int, args: str = "") -> str:
+        if not self.dashboard_url:
+            return "Dashboard tidak aktif (cek DASHBOARD_PORT di .env, 0 berarti dimatikan)."
+        return ("📈 Dashboard (hanya bisa dibuka di laptop tempat bot berjalan):\n"
+                f"{self.dashboard_url}\n"
+                "Jangan bagikan tautan ini: berisi kunci akses ke datamu.")
 
     # ---------- pengeluaran ----------
     def handle_text(self, chat_id: int, text: str, reply_to: str | None = None) -> str:
@@ -186,11 +195,11 @@ class Service:
     def save_income(self, chat_id: int, parsed: ParsedIncome, source: str) -> str:
         today = self.clock()
         entry_id = self.db.add_income(chat_id, parsed.amount, parsed.description,
-                                      parsed.received_on, source)
+                                      parsed.received_on, source, parsed.category)
         start, end = budget.month_bounds(parsed.received_on)
         income = self.db.sum_income_between(chat_id, start, end)
         spent = self.db.sum_between(chat_id, start, end)
-        lines = [f"💵 Pemasukan dicatat: {rupiah(parsed.amount)} (ID m{entry_id})",
+        lines = [f"💵 Pemasukan dicatat: {rupiah(parsed.amount)} · {parsed.category} (ID m{entry_id})",
                  f"📝 {parsed.description}"]
         if parsed.received_on != today:
             lines.append(f"📆 {tanggal(parsed.received_on)}")

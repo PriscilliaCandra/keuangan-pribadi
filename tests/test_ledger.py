@@ -143,7 +143,9 @@ def test_edit_income(svc, db):
     svc.handle_text(CHAT, "gaji 8jt")
     assert "Rp9.000.000" in svc.edit_command(CHAT, "m1 nominal 9jt")
     assert db.get_income(CHAT, 1).amount == 9_000_000
-    assert "tidak punya kategori" in svc.edit_command(CHAT, "m1 kategori belanja")
+    assert "Kategori tidak dikenal" in svc.edit_command(CHAT, "m1 kategori belanja")
+    assert "Investasi" in svc.edit_command(CHAT, "m1 kategori invest")  # awalan nama
+    assert db.get_income(CHAT, 1).category == "Investasi"
 
 
 @pytest.mark.parametrize("args", [
@@ -190,7 +192,7 @@ def test_export_current_month(svc):
     rows = parse_csv(data)
     assert [(r["jenis"], r["id"], r["jumlah"]) for r in rows] == [
         ("keluar", "1", "35000"), ("masuk", "m1", "8000000")]
-    assert rows[1]["kategori"] == "Pemasukan"
+    assert rows[1]["kategori"] == "Gaji"
 
 
 def test_export_all_and_specific_month(svc):
@@ -221,3 +223,55 @@ def test_export_neutralizes_formula_injection(db):
 def test_export_isolated_between_chats(svc, db):
     db.add_expense(2, 5000, "orang lain", "Belanja", TODAY)
     assert parse_csv(svc.export_command(CHAT)[1]) == []
+
+
+# ---------- kategori pemasukan ----------
+from keuangan.categories import guess_income_category, match_income_category  # noqa: E402
+from keuangan.db import Database  # noqa: E402
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("gaji 8jt", "Gaji"), ("Gaji November", "Gaji"), ("bonus tahunan", "Bonus & THR"),
+    ("THR lebaran", "Bonus & THR"), ("freelance desain logo", "Freelance & Usaha"),
+    ("komisi penjualan", "Freelance & Usaha"), ("dividen saham", "Investasi"),
+    ("bunga deposito", "Investasi"), ("hadiah ulang tahun", "Lainnya"), ("", "Lainnya"),
+])
+def test_guess_income_category(text, expected):
+    assert guess_income_category(text) == expected
+
+
+@pytest.mark.parametrize("word,expected", [
+    ("gaji", "Gaji"), ("bonus", "Bonus & THR"), ("freelance", "Freelance & Usaha"),
+    ("free", "Freelance & Usaha"), ("invest", "Investasi"), ("lain", "Lainnya"),
+    ("belanja", None), ("", None),
+])
+def test_match_income_category(word, expected):
+    assert match_income_category(word) == expected
+
+
+def test_income_category_assigned_on_save_and_shown(svc, db):
+    reply = svc.handle_text(CHAT, "+500rb freelance desain")
+    assert "Freelance & Usaha" in reply
+    assert db.get_income(CHAT, 1).category == "Freelance & Usaha"
+    assert "Gaji" in svc.handle_text(CHAT, "gaji 8jt")
+    assert "(Gaji)" in svc.history_command(CHAT) and "(Freelance & Usaha)" in svc.history_command(CHAT)
+
+
+def test_old_database_is_migrated_with_backfilled_categories(tmp_path):
+    import sqlite3
+    path = str(tmp_path / "lama.db")
+    conn = sqlite3.connect(path)
+    conn.executescript(
+        "CREATE TABLE incomes (id INTEGER PRIMARY KEY AUTOINCREMENT, chat_id INTEGER NOT NULL,"
+        " amount INTEGER NOT NULL, description TEXT NOT NULL, received_on TEXT NOT NULL,"
+        " source TEXT NOT NULL DEFAULT 'teks', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);"
+        "INSERT INTO incomes (chat_id, amount, description, received_on) VALUES"
+        " (1, 8000000, 'gaji', '2026-11-18'), (1, 500000, 'sesuatu', '2026-11-17');")
+    conn.commit()
+    conn.close()
+    db = Database(path)  # migrasi berjalan di sini
+    assert [i.category for i in db.incomes_between(1, date(2026, 11, 1), date(2026, 12, 1))] == [
+        "Lainnya", "Gaji"]
+    Database(path)  # idempoten: dibuka lagi tidak error
+    assert db.add_income(1, 1000, "bonus", date(2026, 11, 19)) and \
+        db.get_income(1, 3).category == "Bonus & THR"

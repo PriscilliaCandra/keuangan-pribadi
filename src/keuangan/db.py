@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
+from .categories import guess_income_category
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS expenses (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -24,6 +26,7 @@ CREATE TABLE IF NOT EXISTS incomes (
   chat_id INTEGER NOT NULL,
   amount INTEGER NOT NULL CHECK (amount > 0),
   description TEXT NOT NULL,
+  category TEXT NOT NULL DEFAULT 'Lainnya',
   received_on TEXT NOT NULL,
   source TEXT NOT NULL DEFAULT 'teks',
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now'))
@@ -90,6 +93,7 @@ class Income:
     description: str
     received_on: date
     source: str
+    category: str = "Lainnya"
 
 
 @dataclass
@@ -123,7 +127,18 @@ class Database:
         self._last_stamp: datetime | None = None
         with self._lock:
             self._conn.executescript(SCHEMA)
+            self._migrate()
             self._conn.commit()
+
+    def _migrate(self) -> None:
+        """Migrasi ringan untuk database yang dibuat versi lama."""
+        columns = {r["name"] for r in self._conn.execute("PRAGMA table_info(incomes)")}
+        if "category" not in columns:
+            self._conn.execute(
+                "ALTER TABLE incomes ADD COLUMN category TEXT NOT NULL DEFAULT 'Lainnya'")
+            for row in self._conn.execute("SELECT id, description FROM incomes").fetchall():
+                self._conn.execute("UPDATE incomes SET category=? WHERE id=?",
+                                   (guess_income_category(row["description"]), row["id"]))
 
     def _stamp(self) -> str:
         """Cap waktu pencatatan yang selalu naik (mikrodetik), dipakai mengurutkan riwayat
@@ -169,7 +184,7 @@ class Database:
         return found
 
     _EXPENSE_FIELDS = frozenset({"amount", "description", "category", "spent_on"})
-    _INCOME_FIELDS = frozenset({"amount", "description", "received_on"})
+    _INCOME_FIELDS = frozenset({"amount", "description", "category", "received_on"})
 
     def _update(self, table: str, allowed: frozenset[str], chat_id: int, row_id: int,
                 fields: dict) -> bool:
@@ -191,15 +206,18 @@ class Database:
     @staticmethod
     def _income(row: sqlite3.Row) -> Income:
         return Income(row["id"], row["chat_id"], row["amount"], row["description"],
-                      date.fromisoformat(row["received_on"]), row["source"])
+                      date.fromisoformat(row["received_on"]), row["source"], row["category"])
 
     def add_income(self, chat_id: int, amount: int, description: str, received_on: date,
-                   source: str = "teks") -> int:
+                   source: str = "teks", category: str | None = None) -> int:
+        """`category` kosong -> ditebak dari deskripsi (gaji, bonus, freelance, ...)."""
+        category = category or guess_income_category(description)
         with self._lock:
             cur = self._conn.execute(
-                "INSERT INTO incomes (chat_id, amount, description, received_on, source, created_at)"
-                " VALUES (?, ?, ?, ?, ?, ?)",
-                (chat_id, amount, description, received_on.isoformat(), source, self._stamp()),
+                "INSERT INTO incomes (chat_id, amount, description, category, received_on, source,"
+                " created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (chat_id, amount, description, category, received_on.isoformat(), source,
+                 self._stamp()),
             )
             self._conn.commit()
             return int(cur.lastrowid)

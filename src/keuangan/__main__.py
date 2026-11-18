@@ -6,12 +6,29 @@ import sys
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+from pathlib import Path
+
 from .bot import build_app
 from .config import ConfigError, load_config
+from .dashboard import DashboardServer, load_or_create_token
 from .db import Database
 from .email_scan import make_imap_fetcher
 from .llm import make_llm
 from .service import Service
+
+
+def start_dashboard(cfg, db, clock) -> str | None:
+    """Nyalakan dashboard lokal; kembalikan tautan masuk, atau None bila mati/gagal."""
+    if not cfg.dashboard_port:
+        return None
+    token = cfg.dashboard_token or load_or_create_token(Path(cfg.db_path).with_name("dashboard_token"))
+    try:
+        server = DashboardServer(db, cfg.allowed_chat_ids, clock, token, cfg.dashboard_port)
+    except OSError as exc:  # mis. port dipakai program lain: bot tetap jalan tanpa dashboard
+        logging.getLogger(__name__).warning("Dashboard tidak aktif (port %s): %s", cfg.dashboard_port, exc)
+        return None
+    server.start()
+    return server.url()
 
 
 def main() -> int:
@@ -38,6 +55,7 @@ def main() -> int:
         if cfg.email_enabled else None
     )
     svc = Service(db, llm, clock, cfg.reminder_days, fetcher)
+    svc.dashboard_url = start_dashboard(cfg, db, clock)
 
     logging.getLogger(__name__).info(
         "Siap. AI=%s, scan email=%s, chat diizinkan=%d",

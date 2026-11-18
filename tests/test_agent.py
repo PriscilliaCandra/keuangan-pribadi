@@ -110,7 +110,8 @@ def test_empty_result(seeded):
 @pytest.mark.parametrize("args", [
     {"periode": "kapan-kapan"}, {"jenis": "hutang"}, {"kelompok": "warna"}, {"urut": "acak"},
     {"mulai": "kemarin"}, {"mulai": "2026-11-10", "sampai": "2026-11-01"},
-    {"kategori": "ngawur"}, {"jenis": "pemasukan", "kategori": "belanja"},
+    {"kategori": "ngawur"}, {"jenis": "pemasukan", "kategori": "belanja"},  # daftar kategori beda
+    {"jenis": "pengeluaran", "kategori": "gaji"},
 ])
 def test_bad_arguments_return_error_not_exception(seeded, args):
     assert "error" in seeded.run("cari_transaksi", args)
@@ -342,3 +343,17 @@ def test_ask_failure_is_friendly_and_question_is_capped(db):
     llm = FakeAgentLlm()
     Service(db, llm, clock=lambda: TODAY).ask_command(CHAT, "x" * 5000)
     assert len(llm.asked[0]) == 500
+
+
+def test_income_categories_in_agent(db):
+    db.add_income(CHAT, 8_000_000, "gaji", TODAY - timedelta(days=2))
+    db.add_income(CHAT, 1_500_000, "freelance logo", TODAY - timedelta(days=1))
+    db.add_income(CHAT, 500_000, "bonus kecil", TODAY)
+    t = agent.QueryTools(db, CHAT, TODAY)
+    r = t.run("cari_transaksi", {"jenis": "pemasukan", "kelompok": "kategori"})
+    assert [(g["kunci"], g["total"]) for g in r["kelompok"]] == [
+        ("Gaji", 8_000_000), ("Freelance & Usaha", 1_500_000), ("Bonus & THR", 500_000)]
+    assert t.run("cari_transaksi", {"jenis": "pemasukan", "kategori": "freelance"})["total"] == 1_500_000
+    # nama kategori yang salah ditaruh di kata_kunci tetap dianggap kategori
+    assert t.run("cari_transaksi", {"jenis": "pemasukan", "kata_kunci": "gaji"})["total"] == 8_000_000
+    assert t.run("cari_transaksi", {"jenis": "pemasukan", "batas": 1})["rincian"][0]["kategori"] == "Gaji"

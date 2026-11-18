@@ -15,15 +15,16 @@ def svc(db):
 # ---------- parser: koreksi ----------
 @pytest.mark.parametrize("text,in_reply,expected", [
     # sebagai balasan: nilai murni cukup
-    ("transportasi", True, [("kategori", "Transportasi")]),
+    ("transportasi", True, [("kategori", "transportasi")]),
+    ("bonus", True, [("kategori", "bonus")]),  # kategori pemasukan juga dikenali
     ("40rb", True, [("nominal", "40rb")]),
     ("kemarin", True, [("tanggal", "kemarin")]),
-    ("40rb kemarin transport", True, [("tanggal", "kemarin"), ("nominal", "40rb"), ("kategori", "Transportasi")]),
+    ("40rb kemarin transport", True, [("tanggal", "kemarin"), ("nominal", "40rb"), ("kategori", "transport")]),
     ("kategori belanja", True, [("kategori", "belanja")]),
     ("ganti kategori jadi kesehatan", True, [("kategori", "kesehatan")]),
     # tanpa balasan: harus eksplisit
     ("ubah jadi 40rb", False, [("nominal", "40rb")]),
-    ("ganti jadi transportasi", False, [("kategori", "Transportasi")]),
+    ("ganti jadi transportasi", False, [("kategori", "transportasi")]),
     ("kategorinya transport", False, [("kategori", "transport")]),
     ("harusnya 40rb", False, [("nominal", "40rb")]),
     ("harusnya kemarin", False, [("tanggal", "kemarin")]),
@@ -122,7 +123,11 @@ def test_edit_income_by_reply(svc, db):
     assert "(ID m1)" in msg
     svc.handle_text(CHAT, "9jt", reply_to=msg)
     assert db.get_income(CHAT, 1).amount == 9_000_000
-    assert "tidak punya kategori" in svc.handle_text(CHAT, "belanja", reply_to=msg)
+    out = svc.handle_text(CHAT, "belanja", reply_to=msg)  # kategori pengeluaran ditolak untuk pemasukan
+    assert "tidak dikenal" in out and "Gaji, Bonus & THR" in out
+    assert db.get_income(CHAT, 1).category == "Gaji"
+    assert "Bonus & THR" in svc.handle_text(CHAT, "bonus", reply_to=msg)
+    assert db.get_income(CHAT, 1).category == "Bonus & THR"
 
 
 def test_invalid_value_changes_nothing(svc, db):

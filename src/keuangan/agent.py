@@ -15,7 +15,7 @@ from typing import Any
 
 from . import bills as bills_mod
 from . import budget
-from .categories import exact_category, match_category
+from .categories import exact_category, exact_income_category, match_category, match_income_category
 from .db import Database
 from .formatting import rupiah
 
@@ -43,8 +43,9 @@ TOOL_SPECS: list[dict[str, Any]] = [
                 "mulai": _DATE_PROP,
                 "sampai": _DATE_PROP,
                 "kategori": {"type": "string", "description": (
-                    "Nama KATEGORI: makanan, transportasi, belanja, tagihan, langganan, "
-                    "kesehatan, pendidikan, rumah tangga, lainnya.")},
+                    "Nama KATEGORI. Pengeluaran: makanan, transportasi, belanja, tagihan, langganan, "
+                    "kesehatan, pendidikan, rumah tangga, lainnya. Pemasukan: gaji, bonus, "
+                    "freelance, investasi, lainnya.")},
                 "kata_kunci": {"type": "string", "description": (
                     "Kata di catatan/nama toko, mis. kopi, gojek, indomaret. Bukan nama kategori.")},
                 "kelompok": {"type": "string", "enum": ["tidak", "kategori", "bulan", "hari"]},
@@ -194,15 +195,18 @@ class QueryTools:
         batas = _clamp_int(args.get("batas"), 0, MAX_ROWS, 0)
         start, end = _range(args, self.today)
 
+        # Kategori pengeluaran dan pemasukan adalah daftar yang berbeda.
+        match = match_category if jenis == "pengeluaran" else match_income_category
+        exact = exact_category if jenis == "pengeluaran" else exact_income_category
         category = None
         if args.get("kategori"):
-            category = match_category(str(args["kategori"]))
+            category = match(str(args["kategori"]))
             if category is None:
-                raise ValueError("kategori tidak dikenal")
+                raise ValueError("kategori tidak dikenal untuk jenis " + jenis)
         keyword = str(args.get("kata_kunci") or "").strip().lower()[:60]
-        if keyword and category is None and jenis == "pengeluaran":
+        if keyword and category is None:
             # Model sering menaruh nama kategori di kata_kunci ("transportasi"): perlakukan sebagai kategori.
-            as_category = exact_category(keyword)
+            as_category = exact(keyword)
             if as_category:
                 category, keyword = as_category, ""
 
@@ -210,10 +214,8 @@ class QueryTools:
             raw = self.db.expenses_between(self.chat_id, start, end)
             items = [(e.id, e.spent_on, e.amount, e.category, e.description) for e in raw]
         else:
-            if category:
-                raise ValueError("pemasukan tidak punya kategori")
             raw_in = self.db.incomes_between(self.chat_id, start, end)
-            items = [(f"m{i.id}", i.received_on, i.amount, "Pemasukan", i.description) for i in raw_in]
+            items = [(f"m{i.id}", i.received_on, i.amount, i.category, i.description) for i in raw_in]
         if category:
             items = [x for x in items if x[3] == category]
         if keyword:

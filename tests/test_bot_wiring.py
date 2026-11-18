@@ -10,7 +10,7 @@ def test_build_app_registers_handlers_and_jobs(db):
     assert {"harian", "mingguan"} <= names and "email" not in names
     commands = {c for h in app.handlers[0] for c in getattr(h, "commands", [])}
     assert {"anggaran", "ringkasan", "tagihan", "langganan", "pakai", "batal", "scan_email", "hapus",
-            "masuk", "saldo", "riwayat", "edit", "ekspor", "tanya"} <= commands
+            "masuk", "saldo", "riwayat", "edit", "ekspor", "tanya", "dashboard"} <= commands
 
 
 def test_email_job_scheduled_when_configured(db):
