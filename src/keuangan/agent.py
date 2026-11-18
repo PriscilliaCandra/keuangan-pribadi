@@ -15,6 +15,7 @@ from typing import Any
 
 from . import bills as bills_mod
 from . import budget
+from . import debts as debts_mod
 from . import plans as plans_mod
 from .categories import exact_category, exact_income_category, match_category, match_income_category
 from .db import Database
@@ -76,6 +77,13 @@ TOOL_SPECS: list[dict[str, Any]] = [
         "parameters": {"type": "object", "properties": {}},
     },
     {
+        "name": "utang_piutang",
+        "description": ("Utang-piutang yang masih terbuka: siapa berutang padaku, kepada siapa aku berutang, "
+                        "jumlah, catatan, dan jatuh tempo. Pakai untuk 'siapa yang belum bayar', "
+                        "'aku utang ke siapa', 'total piutang'."),
+        "parameters": {"type": "object", "properties": {}},
+    },
+    {
         "name": "target_tabungan",
         "description": "Daftar target tabungan: terkumpul, target, persen, tenggat, setoran per bulan.",
         "parameters": {"type": "object", "properties": {}},
@@ -94,7 +102,8 @@ def system_prompt(today: date) -> str:
         "berdasarkan hasil alat. Selalu panggil alat untuk mendapat angka; jangan menebak. "
         "Salin nilai berakhiran _rp apa adanya dan jangan menghitung ulang total yang sudah ada. "
         "Panduan alat: 'sisa uang/saldo' -> arus_kas; 'uang aman per hari/sampai gajian' -> "
-        "uang_aman_harian; 'target/tabungan' -> target_tabungan; 'anggaran' -> status_anggaran; "
+        "uang_aman_harian; 'target/tabungan' -> target_tabungan; 'utang/piutang/belum bayar' -> utang_piutang; "
+        "'anggaran' -> status_anggaran; "
         "pertanyaan lintas waktu ('bulan apa', 'tren', 'paling') -> cari_transaksi dengan "
         "periode=semua atau 3_bulan dan kelompok=bulan; membandingkan bulan -> kelompok=bulan; "
         "tanpa periode disebut, anggap bulan_ini. "
@@ -181,6 +190,7 @@ class QueryTools:
     def __init__(self, db: Database, chat_id: int, today: date):
         self.db, self.chat_id, self.today = db, chat_id, today
         self.plans = plans_mod.PlanStore(db)
+        self.debts = debts_mod.DebtStore(db)
 
     def run(self, name: str, args: dict | None) -> dict[str, Any]:
         """Jalankan alat. Galat dikembalikan ke model sebagai {"error": ...}, tidak dilempar."""
@@ -188,6 +198,7 @@ class QueryTools:
             "cari_transaksi": self.cari_transaksi, "arus_kas": self.arus_kas,
             "status_anggaran": self.status_anggaran, "daftar_tagihan": self.daftar_tagihan,
             "uang_aman_harian": self.uang_aman_harian, "target_tabungan": self.target_tabungan,
+            "utang_piutang": self.utang_piutang,
         }
         handler = handlers.get(name)
         if handler is None:
@@ -195,6 +206,10 @@ class QueryTools:
         args = args if isinstance(args, dict) else {}
         # Argumen salah ketik tidak boleh diabaikan diam-diam (jawaban jadi menyesatkan).
         allowed = set(next(t for t in TOOL_SPECS if t["name"] == name)["parameters"]["properties"])
+        if not allowed:
+            # Alat tanpa parameter: argumen berlebih (model kecil sering menirunya dari alat lain) tak bisa
+            # mengubah makna, dan pengguna tetap ditentukan kode. Diabaikan agar model tak menyerah.
+            args = {}
         unknown = sorted(set(args) - allowed)
         if unknown:
             return {"error": f"argumen tidak dikenal: {unknown}. Yang valid: {sorted(allowed)}"}
@@ -302,6 +317,21 @@ class QueryTools:
             "perkiraan_uang_habis": s.depletion.isoformat() if s.depletion else None,
             "tanggal_gajian_belum_diatur": s.payday_is_default,
         }
+
+    def utang_piutang(self, args: dict) -> dict[str, Any]:
+        debts = self.debts.list(self.chat_id)
+        if not debts:
+            return {"catatan": "Tidak ada utang-piutang yang terbuka."}
+
+        def rows(direction: str) -> list[dict[str, Any]]:
+            return [{"orang": person, "jumlah_rp": rupiah(total), "catatan": ", ".join(notes[:2]) or None,
+                     "jatuh_tempo": due.isoformat() if due else None,
+                     "lewat_tempo": bool(due and due < self.today)}
+                    for person, total, notes, due in debts_mod._group(debts, direction)]
+
+        owed_to_me, owed_by_me = self.debts.totals(self.chat_id)
+        return {"orang_berutang_padaku": rows(debts_mod.PIUTANG), "total_piutang_rp": rupiah(owed_to_me),
+                "aku_berutang_ke": rows(debts_mod.UTANG), "total_utang_rp": rupiah(owed_by_me)}
 
     def target_tabungan(self, args: dict) -> dict[str, Any]:
         goals = self.plans.list_goals(self.chat_id)

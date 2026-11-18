@@ -121,7 +121,8 @@ def test_unknown_argument_names_are_rejected_not_ignored(seeded):
     r = seeded.run("cari_transaksi", {"kateg": "makanan"})  # salah ketik dari 'kategori'
     assert "error" in r and "kateg" in r["error"] and "kategori" in r["error"]
     assert "error" in seeded.run("arus_kas", {"periode": "bulan_ini", "x": 1})
-    assert "error" in seeded.run("status_anggaran", {"apa_saja": 1})
+    # alat tanpa parameter: argumen berlebih diabaikan (bukan galat), hasilnya tetap milik pengguna sendiri
+    assert "anggaran" in seeded.run("status_anggaran", {"apa_saja": 1})
 
 
 def test_unknown_tool_and_non_dict_args(seeded):
@@ -176,7 +177,7 @@ def test_system_prompt_has_date_and_rules():
 def test_tool_specs_are_read_only_and_well_formed():
     names = {t["name"] for t in agent.TOOL_SPECS}
     assert names == {"cari_transaksi", "arus_kas", "status_anggaran", "daftar_tagihan",
-                     "uang_aman_harian", "target_tabungan"}
+                     "uang_aman_harian", "target_tabungan", "utang_piutang"}
     for t in agent.TOOL_SPECS:
         assert t["parameters"]["type"] == "object" and t["description"]
     assert "chat_id" not in json.dumps(agent.TOOL_SPECS)  # model tak bisa memilih pengguna
@@ -393,5 +394,6 @@ def test_new_agent_tools_are_per_user_and_reject_arguments(db):
     t = agent.QueryTools(db, CHAT, TODAY)
     assert t.run("target_tabungan", {})["target"] == []
     assert "Belum ada dasar" in t.run("uang_aman_harian", {})["catatan"]
-    assert "error" in t.run("uang_aman_harian", {"chat_id": 2})
-    assert "error" in t.run("target_tabungan", {"nama": "rahasia"})
+    # argumen berlebih (termasuk upaya memilih pengguna lain) diabaikan: hasil tetap milik chat sendiri
+    assert "Belum ada dasar" in t.run("uang_aman_harian", {"chat_id": 2})["catatan"]
+    assert t.run("target_tabungan", {"nama": "rahasia", "chat_id": 2})["target"] == []

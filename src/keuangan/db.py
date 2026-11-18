@@ -139,13 +139,36 @@ CREATE TABLE IF NOT EXISTS goal_deposits (
   on_date TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS ix_goal_deposits_chat_date ON goal_deposits(chat_id, on_date);
+
+CREATE TABLE IF NOT EXISTS debts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  chat_id INTEGER NOT NULL,
+  person TEXT NOT NULL,
+  person_key TEXT NOT NULL,
+  direction TEXT NOT NULL CHECK (direction IN ('piutang', 'utang')),
+  amount INTEGER NOT NULL CHECK (amount > 0),
+  note TEXT NOT NULL DEFAULT '',
+  created_on TEXT NOT NULL,
+  due_on TEXT,
+  last_reminded TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_debts_chat_person ON debts(chat_id, person_key);
+
+CREATE TABLE IF NOT EXISTS debt_payments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  debt_id INTEGER NOT NULL,
+  chat_id INTEGER NOT NULL,
+  amount INTEGER NOT NULL CHECK (amount > 0),
+  on_date TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_debt_payments_debt ON debt_payments(debt_id);
 """
 
 # Tabel yang berisi data milik pengguna (kunci chat_id): dihapus saat pengguna minta hapus akun.
 # Pengecualian disengaja: `ai_usage` (hanya chat_id + tanggal + hitungan, tanpa isi) disimpan sampai
 # 7 hari agar kuota AI harian tak bisa direset dengan hapus-akun lalu daftar ulang; lihat privacy.py.
 USER_DATA_TABLES = ("expenses", "incomes", "budgets", "budget_alerts", "bills",
-                    "goal_deposits", "goals", "user_settings",
+                    "goal_deposits", "goals", "user_settings", "debt_payments", "debts",
                     "processed_emails", "login_tokens", "sessions", "users")
 
 

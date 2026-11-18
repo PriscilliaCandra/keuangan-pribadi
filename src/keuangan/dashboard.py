@@ -7,6 +7,7 @@ from typing import Any
 
 from . import bills as bills_mod
 from . import budget
+from . import debts as debts_mod
 from . import plans as plans_mod
 from .agent import resolve_period
 from .categories import CATEGORIES, INCOME_CATEGORIES
@@ -127,11 +128,26 @@ def build_summary(db: Database, chat_id: int, period: str, today: date) -> dict[
             "payday_is_default": safe.payday_is_default, "upcoming_bills": safe.upcoming_bills,
             "saved": safe.saved},
         "goals": goals,
+        "debts": _debts_payload(db, chat_id, today),
         "bills": {"items": bill_rows,
                   "monthly_total": sum(bills_mod.monthly_cost(b) for b in active_bills)},
         "categories": {"expense": CATEGORIES, "income": INCOME_CATEGORIES},
         "periods": PERIODS,
     }
+
+
+def _debts_payload(db: Database, chat_id: int, today: date) -> dict[str, Any]:
+    store = debts_mod.DebtStore(db)
+    debts = store.list(chat_id)
+    owed_to_me, owed_by_me = store.totals(chat_id)
+
+    def rows(direction: str) -> list[dict[str, Any]]:
+        return [{"person": person, "amount": total, "notes": notes[:2],
+                 "due": due.isoformat() if due else None, "overdue": bool(due and due < today)}
+                for person, total, notes, due in debts_mod._group(debts, direction)[:8]]
+
+    return {"owed_to_me": owed_to_me, "owed_by_me": owed_by_me,
+            "to_me": rows(debts_mod.PIUTANG), "by_me": rows(debts_mod.UTANG)}
 
 
 def list_transactions(db: Database, chat_id: int, period: str, today: date, kind: str = "semua",

@@ -38,6 +38,21 @@ tetapi **tidak punya perintah untuk membaca catatan pengguna**. Lihat [docs/DEPL
   `berapa sisa uangku?`. Pertanyaan yang diketik langsung (diawali "berapa", "apa", "bulan apa", atau
   berakhiran `?`) otomatis dijawab agen.
 
+**Utang-piutang & patungan**
+- Catat dengan kalimat biasa: `Budi utang 50rb makan siang`, `utang ke Siti 30rb buat bensin`,
+  `pinjamin Budi 100rb`, `pinjam 50rb dari Budi`, opsional `tempo 2026-12-20` / `tempo besok`.
+- Pelunasan: `Budi bayar 20rb` (cicilan boleh), `Budi udah bayar`, `bayar utang ke Siti 10rb`, `/lunas Budi`.
+  Bot hanya menganggap itu pelunasan bila orangnya memang punya utang terbuka (kalimat lain tetap pengeluaran).
+- `/utang` menampilkan semua (siapa berutang padamu, kamu berutang ke siapa), `/tagih Budi` membuat **draf pesan
+  penagihan yang sopan** untuk kamu salin dan kirim sendiri (bot tidak pernah mengirim pesan ke orang lain).
+- Pengingat jatuh tempo tiga tahap (H-3, hari-H, sekali setelah lewat).
+- **Patungan**: `patungan makan malam 240rb dengan Budi, Siti, Ani` (dibagi rata), `... dibayar Budi`
+  (temanmu yang membayar, jadi kamu berutang), `patungan hadiah 300rb bagi Budi 120rb, Siti 80rb` (bagian
+  berbeda), atau `patungan makan 200rb 4 orang` (hanya bagianmu). Selalu ada **pratinjau dan konfirmasi
+  "ya"/"batal"** sebelum disimpan. Hanya **bagianmu** menjadi pengeluaran; sisanya menjadi piutang.
+  Sisa pembulatan ditanggung pembayar, jadi jumlahnya selalu pas.
+- Utang-piutang dicatat **terpisah** dari pengeluaran/pemasukan (meminjamkan uang bukan belanja).
+
 **Dashboard web (hanya-baca, login per pengguna)**
 - Kirim `/dashboard` di Telegram → tautan masuk **sekali pakai (10 menit)**; tekan "Masuk" di halamannya.
   Sesi berlaku 7 hari dan bisa diakhiri dengan tombol Keluar.
@@ -73,6 +88,8 @@ tetapi **tidak punya perintah untuk membaca catatan pengguna**. Lihat [docs/DEPL
 | `gaji 8jt` · `+500rb freelance` · `/masuk …` | catat pemasukan |
 | `/saldo` | arus kas bulan ini |
 | `/gajian 25` · `/aman` | atur tanggal gajian · uang aman per hari sampai gajian |
+| `/utang` · `/utang Siti 30rb` · `/piutang Budi 50rb makan siang` | daftar · aku berutang · orang berutang padaku |
+| `/lunas Budi [20rb]` · `/tagih Budi` · `/patungan makan 240rb dengan Budi, Siti` | pelunasan · draf tagihan · patungan |
 | `/target <nama> <jumlah> [sampai 2027-03]` · `/tabung <nama> <jumlah>` · `/tarik …` | target tabungan |
 | `/riwayat` | 10 catatan terakhir + ID (pemasukan berawalan `m`) |
 | `/edit <id> <kategori\|nominal\|tanggal\|catatan> <nilai>` | ubah catatan |

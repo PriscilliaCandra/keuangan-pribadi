@@ -2,7 +2,7 @@
 ubah di sini bila perilakunya berubah dan naikkan VERSION agar persetujuan diminta ulang."""
 from __future__ import annotations
 
-VERSION = "2026-11-beta3"  # dinaikkan: target tabungan & tanggal gajian ditambahkan ke ringkasan
+VERSION = "2026-11-beta4"  # dinaikkan: catatan utang-piutang & patungan (nama orang lain) ditambahkan
 
 
 def summary(ai_note: str) -> str:
@@ -10,7 +10,8 @@ def summary(ai_note: str) -> str:
         "🔒 Privasi & data (versi beta)\n\n"
         "Yang disimpan di server: ID chat dan nama Telegram-mu, catatan pengeluaran dan "
         "pemasukan (jumlah, kategori, catatan, tanggal), anggaran, tagihan/langganan, target tabungan, "
-        "tanggal gajian, dan "
+        "tanggal gajian, catatan utang-piutang dan patungan (nama teman yang kamu ketik sendiri beserta "
+        "jumlahnya; sebaiknya pakai nama panggilan), dan "
         "hitungan pemakaian AI harian (hanya angka, tanpa isi; dibuang otomatis setelah 7 hari, "
         "termasuk bila kamu menghapus akun, untuk mencegah penyalahgunaan kuota).\n"
         "Foto struk tidak disimpan; hanya hasil bacaannya.\n"

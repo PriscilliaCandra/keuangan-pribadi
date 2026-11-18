@@ -6,11 +6,13 @@ import imaplib
 import logging
 import re
 import threading
+import time
 from datetime import date, timedelta
 from typing import Any, Callable
 
 from . import bills as bills_mod
 from . import agent, budget, email_scan, ledger, reports
+from . import debts as debts_mod
 from . import plans as plans_mod
 from .access import AccessControl, AiBusy, QuotaExceeded
 from .categories import CATEGORIES, LAINNYA, guess_category, match_category
@@ -39,6 +41,8 @@ HELP = """Halo! Aku pencatat keuanganmu.
 
 🧮 /aman — uang aman per hari sampai gajian (atur tanggal gajian: /gajian 25)
 🎯 /target liburan bali 5jt sampai 2027-03 · "nabung 500rb liburan" · /tarik liburan 200rb
+💸 Utang-piutang: "Budi utang 50rb makan siang" · "utang ke Siti 30rb" · "Budi bayar 20rb" · /utang · /lunas Budi · /tagih Budi
+🍽️ Patungan: "patungan makan malam 240rb dengan Budi, Siti, Ani" (ada pratinjau, balas "ya")
 💡 Nominal bisa ditulis sehari-hari: goceng, ceban, gocap, cepek, sejuta
 
 💰 /anggaran — lihat anggaran
@@ -100,6 +104,9 @@ class Service:
         # Tanpa konfigurasi: tak ada admin dan kuota AI longgar (dipakai tes & mode sederhana).
         self.access = access or AccessControl(db, ai_daily_limit=100_000, clock=clock)
         self.plans = plans_mod.PlanStore(db)
+        self.debts = debts_mod.DebtStore(db)
+        self._pending_splits: dict[int, tuple[debts_mod.SplitPlan, float]] = {}  # menunggu "ya"/"batal"
+        self._pending_lock = threading.Lock()
         self._scan_lock = threading.Lock()  # satu pemindaian email pada satu waktu
         self.dashboard_base_url: str | None = None  # diisi saat dashboard menyala
 
@@ -124,6 +131,9 @@ class Service:
         di pesan itu, jadi balasan "transportasi" mengubah catatan yang dibalas.
         """
         today = self.clock()
+        answered = self._answer_pending_split(chat_id, text)   # "ya"/"batal" untuk patungan yang menunggu
+        if answered is not None:
+            return answered
         ref = _REF_IN_TEXT.search(reply_to or "")
         target = ref.group(1) if ref else None
         if parse_quick_delete(text, target is not None):
@@ -151,6 +161,10 @@ class Service:
         saved = self._saving_from_text(chat_id, text)
         if saved is not None:
             return saved
+        for handler in (self._split_from_text, self._debt_from_text):
+            handled = handler(chat_id, text)
+            if handled is not None:
+                return handled
         if self.llm and is_question(text):
             return self.ask_command(chat_id, text)
         income = parse_income(text, today)
@@ -444,6 +458,187 @@ class Service:
                 return None
         return self.tabung_command(chat_id, m.group(2))
 
+    # ---------- utang-piutang & patungan ----------
+    SPLIT_CONFIRM_SECONDS = 600
+    _YES = {"ya", "y", "iya", "yes", "ok", "oke", "simpan", "gas", "siap"}
+    _NO = {"batal", "tidak", "gak", "ga", "nggak", "engga", "enggak", "no", "n", "cancel"}
+
+    def utang_command(self, chat_id: int, args: str = "") -> str:
+        """/utang: daftar. /utang Budi 50rb buat bensin: AKU berutang ke Budi. /utang hapus Budi."""
+        return self._debt_command(chat_id, args, debts_mod.UTANG)
+
+    def piutang_command(self, chat_id: int, args: str = "") -> str:
+        """/piutang Budi 50rb makan siang [tempo 2026-12-20]: Budi berutang PADAKU."""
+        return self._debt_command(chat_id, args, debts_mod.PIUTANG)
+
+    def _debt_command(self, chat_id: int, args: str, direction: str) -> str:
+        today, text = self.clock(), args.strip()
+        if not text:
+            return debts_mod.format_ledger(self.debts.list(chat_id), today)
+        if m := re.match(r"(?i)hapus\s+(.+)$", text):
+            matches = self.debts.match_person(chat_id, m.group(1))
+            if len(matches) != 1:
+                return "Nama tidak ditemukan atau kurang jelas. Lihat daftar: /utang"
+            n = self.debts.delete_person(chat_id, matches[0])
+            return f"🗑️ Catatan utang-piutang dengan {matches[0]} dihapus ({n} catatan)."
+        due, rest, bad_due = debts_mod._extract_due(text, today)
+        if bad_due:
+            return "Tempo tidak terbaca. Contoh: tempo 2026-12-20, tempo besok, tempo 7 hari lagi"
+        found = find_amount(rest)
+        amount = found[0] if found else None
+        before, after = (rest[: found[1][0]], rest[found[1][1]:]) if found else (rest, "")
+        # nama = kata-kata sebelum jumlah ("ke Siti 30rb"); kata sisanya + setelah jumlah jadi catatan
+        words = re.sub(r"(?i)^\s*(?:ke|sama|dari|pada|kepada)\s+", "", before.strip()).split()
+        # sampai 2 kata ("Mas Budi") jadi nama; bila lebih, hanya kata pertama ("Budi makan siang 5rb")
+        name, _ = debts_mod._take_name(" ".join(words[:2] if len(words) <= 2 else words[:1]))
+        remainder = f"{' '.join(words[len(name.split()):])} {after}" if name else after
+        if not name and found:                                  # "/utang 50rb Siti": jumlah di depan
+            words = after.strip().split()                       # jumlah di depan: nama = kata pertama saja
+            name, _ = debts_mod._take_name(" ".join(words[:1]))
+            remainder = " ".join(words[1:]) if name else ""
+        if not name or amount is None:
+            who = "Budi" if direction == debts_mod.PIUTANG else "Siti"
+            return f"Format: /{direction} <nama> <jumlah> [catatan] [tempo 2026-12-20]\nContoh: /{direction} {who} 50rb makan siang"
+        return self._record_debt(chat_id, name, direction, amount, debts_mod._clean_note(remainder), due)
+
+    def _record_debt(self, chat_id: int, name: str, direction: str, amount: int, note: str,
+                     due: date | None) -> str:
+        try:
+            debt = self.debts.add(chat_id, name, direction, amount, note, self.clock(), due)
+        except ValueError as exc:
+            return f"Tidak bisa mencatat: {exc}."
+        total = sum(d.outstanding for d in self.debts.list(chat_id)
+                    if d.key == debt.key and d.direction == direction)
+        extra = f" (total {rupiah(total)})" if total != amount else ""
+        tempo = f"\n📆 Jatuh tempo {tanggal(due)}" if due else ""
+        note_line = f"\n📝 {note}" if note else ""
+        if direction == debts_mod.PIUTANG:
+            head = f"💸 Dicatat: {debt.person} berutang {rupiah(amount)} padamu{extra}"
+        else:
+            head = f"💸 Dicatat: kamu berutang {rupiah(amount)} ke {debt.person}{extra}"
+        return (head + note_line + tempo + "\n(Dicatat terpisah dari pengeluaran/pemasukan.)"
+                f"\nLunas: /lunas {debt.person} · Daftar: /utang")
+
+    def lunas_command(self, chat_id: int, args: str = "") -> str:
+        """/lunas Budi [20rb]: Budi membayar padaku, atau aku membayar Budi (otomatis dari catatan)."""
+        found = find_amount(args)
+        amount, rest = (found[0], args[: found[1][0]] + " " + args[found[1][1]:]) if found else (None, args)
+        name = debts_mod.clean_person(rest)
+        if not name:
+            return "Format: /lunas <nama> [jumlah]. Contoh: /lunas Budi 20rb (tanpa jumlah = lunas semua)"
+        return self._settle(chat_id, name, amount, None)
+
+    def _settle(self, chat_id: int, name: str, amount: int | None, direction: str | None) -> str:
+        matches = self.debts.match_person(chat_id, name)
+        if not matches:
+            return f"Tidak ada utang-piutang terbuka dengan '{name}'. Lihat: /utang"
+        if len(matches) > 1:
+            return "Maksudmu yang mana? " + ", ".join(matches)
+        person = matches[0]
+        directions = self.debts.directions_for(chat_id, person)
+        if direction is None:
+            if len(directions) > 1:
+                return (f"Kamu dan {person} sama-sama punya utang. Pakai /lunas dengan arah yang jelas: "
+                        f"\"{person} bayar 20rb\" (dia membayarmu) atau \"bayar utang ke {person} 20rb\" (kamu membayar).")
+            direction = next(iter(directions))
+        if amount is not None and not 0 < amount <= debts_mod.MAX_AMOUNT:
+            return "Jumlah tidak wajar."
+        try:
+            result = self.debts.pay(chat_id, person, amount, self.clock(), direction)
+        except ValueError:
+            return "Arah pembayaran ambigu. Gunakan kalimat yang jelas."
+        if result is None:
+            return f"Tidak ada utang-piutang terbuka dengan {person}."
+        who = f"{result.person} membayar {rupiah(result.applied)}" if result.direction == debts_mod.PIUTANG \
+            else f"kamu membayar {result.person} {rupiah(result.applied)}"
+        if result.remaining == 0:
+            tail = "🎉 Lunas!"
+        else:
+            tail = f"Sisa {rupiah(result.remaining)}."
+        if result.excess:
+            tail += f" (Jumlahnya {rupiah(result.excess)} lebih besar dari sisa, kelebihannya tidak dicatat.)"
+        return f"✅ Dicatat: {who}. {tail}"
+
+    def tagih_command(self, chat_id: int, args: str = "") -> str:
+        """/tagih Budi: draf pesan penagihan yang sopan untuk kamu salin dan kirim sendiri."""
+        if not args.strip():
+            return "Format: /tagih <nama>. Contoh: /tagih Budi"
+        matches = self.debts.match_person(chat_id, args)
+        if len(matches) != 1:
+            return "Nama tidak ditemukan atau kurang jelas. Lihat daftar: /utang"
+        owed = [d for d in self.debts.list(chat_id) if d.key == debts_mod.person_key(matches[0])
+                and d.direction == debts_mod.PIUTANG]
+        if not owed:
+            return f"{matches[0]} tidak berutang padamu."
+        return ("Salin dan kirim sendiri ya (aku tidak mengirim pesan ke siapa pun):\n\n"
+                + debts_mod.format_tagih(matches[0], owed))
+
+    def _debt_from_text(self, chat_id: int, text: str) -> str | None:
+        """'Budi utang 50rb', 'utang ke Siti 30rb', 'Budi bayar 20rb', 'lunas Budi'. None bila bukan."""
+        intent = debts_mod.parse_debt_text(text, self.clock())
+        if intent is None:
+            return None
+        if intent.error:
+            return intent.error
+        if intent.kind in (debts_mod.PIUTANG, debts_mod.UTANG):
+            if intent.amount is None or not intent.name:
+                return None
+            return self._record_debt(chat_id, intent.name, intent.kind, intent.amount, intent.note, intent.due)
+        # pembayaran: hanya sah bila orangnya memang punya catatan terbuka; selain itu bukan urusan kita
+        matches = self.debts.match_person(chat_id, intent.name)
+        if not matches:
+            return None
+        directions = self.debts.directions_for(chat_id, matches[0])
+        wanted = {"terima": debts_mod.PIUTANG, "bayar": debts_mod.UTANG}.get(intent.kind)
+        if wanted is not None and wanted not in directions:
+            return None
+        return self._settle(chat_id, intent.name, intent.amount, wanted)
+
+    # -- patungan --
+    def patungan_command(self, chat_id: int, args: str = "") -> str:
+        return self._split_from_text(chat_id, "patungan " + args) or ""
+
+    def _split_from_text(self, chat_id: int, text: str) -> str | None:
+        plan = debts_mod.parse_split(text, self.clock())
+        if plan is None:
+            return None
+        if isinstance(plan, str):
+            return plan
+        with self._pending_lock:
+            self._pending_splits[chat_id] = (plan, time.monotonic() + self.SPLIT_CONFIRM_SECONDS)
+        return debts_mod.format_split_preview(plan)
+
+    def _answer_pending_split(self, chat_id: int, text: str) -> str | None:
+        word = text.strip().lower().strip(".!? ")
+        if word not in self._YES and word not in self._NO:
+            return None
+        with self._pending_lock:
+            entry = self._pending_splits.pop(chat_id, None)
+        if entry is None or time.monotonic() > entry[1]:
+            return None  # tidak ada yang menunggu (atau kedaluwarsa): perlakukan sebagai teks biasa
+        if word in self._NO:
+            return "Patungan dibatalkan, tidak ada yang disimpan."
+        return self._apply_split(chat_id, entry[0])
+
+    def _apply_split(self, chat_id: int, plan: debts_mod.SplitPlan) -> str:
+        if len(self.debts.list(chat_id)) + len(plan.debts) > debts_mod.MAX_OPEN_DEBTS:
+            return f"Catatan utang-piutangmu penuh (maks {debts_mod.MAX_OPEN_DEBTS}). Lunasi/hapus yang lama dulu."
+        today = self.clock()
+        lines = ["✅ Patungan disimpan"]
+        if plan.my_share > 0:
+            expense_id = self.db.add_expense(chat_id, plan.my_share, f"Patungan: {plan.description}"[:120],
+                                             plan.category, today, "patungan")
+            lines.append(f"• Pengeluaranmu {rupiah(plan.my_share)} · {plan.category} (ID {expense_id})")
+        for name, amount, direction in plan.debts:
+            self.debts.add(chat_id, name, direction, amount, f"patungan {plan.description}"[:80], today)
+        if plan.debts and plan.payer == "aku":
+            lines.append("• Ditagih: " + ", ".join(f"{n} {rupiah(a)}" for n, a, _ in plan.debts))
+        elif plan.debts:
+            lines.append(f"• Kamu berutang {rupiah(plan.my_share)} ke {plan.payer}")
+        if plan.debts:
+            lines.append("Lacak: /utang · Tagih: /tagih <nama>")
+        return "\n".join(lines)
+
     # ---------- tagihan & langganan ----------
     def bills_command(self, chat_id: int, kind: str, args: str) -> str:
         today = self.clock()
@@ -487,6 +682,11 @@ class Service:
             messages.append(bills_mod.format_reminders(reminders))
             for r in reminders:
                 self.db.mark_reminded(r.bill.id, r.token)
+        due_debts = debts_mod.due_reminders(self.debts, chat_id, today, self.reminder_days)
+        if due_debts:
+            messages.append(debts_mod.format_reminders(due_debts))
+            for r in due_debts:
+                self.debts.mark_reminded(chat_id, r.debt.id, r.token)
         if today.day == 1:
             stale = bills_mod.stale_subscriptions(self.db, chat_id, today)
             if stale:

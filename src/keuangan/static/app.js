@@ -216,6 +216,25 @@
         s.payday_is_default ? h("div", { class: "muted", text: "Tanggal gajian belum diatur (dipakai tanggal 1): /gajian 25" }) : null));
   }
 
+  function renderDebts(d) {
+    const x = d.debts;
+    $("#debt-total").textContent = (x.owed_to_me || x.owed_by_me)
+      ? `Piutang ${rp(x.owed_to_me)} · Utang ${rp(x.owed_by_me)}` : "";
+    const fill = (host, rows, empty) => {
+      host.replaceChildren();
+      if (!rows.length) { host.append(h("div", { class: "empty", text: empty })); return; }
+      for (const r of rows) {
+        const sub = [r.notes.join(", "), r.due ? (r.overdue ? `⚠ lewat tempo ${fmtDate(r.due)}` : `tempo ${fmtDate(r.due)}`) : ""]
+          .filter(Boolean).join(" · ");
+        host.append(h("div", { class: "bill" },
+          h("div", {}, h("div", { text: r.person }), sub ? h("div", { class: r.overdue ? "sub down-bad" : "sub", text: sub }) : null),
+          h("div", { class: "amt", text: rp(r.amount) })));
+      }
+    };
+    fill($("#debts-to-me"), x.to_me, "Tidak ada. Catat: Budi utang 50rb");
+    fill($("#debts-by-me"), x.by_me, "Tidak ada.");
+  }
+
   function renderGoals(d) {
     const host = $("#goals");
     host.replaceChildren();
@@ -311,6 +330,7 @@
     renderBills(d);
     renderSafe(d);
     renderGoals(d);
+    renderDebts(d);
     syncFilters();
   }
 
