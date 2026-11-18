@@ -198,7 +198,10 @@ def test_export_current_month(svc):
 def test_export_all_and_specific_month(svc):
     svc.handle_text(CHAT, "kopi 25rb 30 hari lalu")
     svc.handle_text(CHAT, "makan 35rb")
-    assert len(parse_csv(svc.export_command(CHAT, "semua")[1])) == 2
+    import zipfile
+    name_all, blob = svc.export_command(CHAT, "semua")
+    assert name_all == "keuangan-semua.zip"
+    assert len(parse_csv(zipfile.ZipFile(io.BytesIO(blob)).read("transaksi.csv"))) == 2
     name, data = svc.export_command(CHAT, "2026-10")
     assert name == "keuangan-2026-10.csv" and len(parse_csv(data)) == 1
 

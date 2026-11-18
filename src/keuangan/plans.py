@@ -84,6 +84,21 @@ class PlanStore:
             "INSERT INTO user_settings (chat_id, payday) VALUES (?, ?)"
             " ON CONFLICT(chat_id) DO UPDATE SET payday=excluded.payday", (chat_id, payday))
 
+    # --- pengingat malam (opt-in) ---
+    def get_evening(self, chat_id: int) -> bool:
+        rows = self.db.query("SELECT evening_reminder FROM user_settings WHERE chat_id=?", (chat_id,))
+        return bool(rows and rows[0]["evening_reminder"])
+
+    def set_evening(self, chat_id: int, on: bool) -> None:
+        self.db.execute(
+            "INSERT INTO user_settings (chat_id, evening_reminder) VALUES (?, ?)"
+            " ON CONFLICT(chat_id) DO UPDATE SET evening_reminder=excluded.evening_reminder",
+            (chat_id, int(on)))
+
+    def evening_chat_ids(self) -> set[int]:
+        return {r["chat_id"] for r in self.db.query(
+            "SELECT chat_id FROM user_settings WHERE evening_reminder=1")}
+
     # --- target tabungan ---
     _SELECT = ("SELECT g.*, COALESCE((SELECT SUM(amount) FROM goal_deposits d WHERE d.goal_id=g.id), 0)"
                " AS saved FROM goals g")
@@ -137,6 +152,14 @@ class PlanStore:
     def delete_goal(self, chat_id: int, goal_id: int) -> bool:
         self.db.execute("DELETE FROM goal_deposits WHERE goal_id=? AND chat_id=?", (goal_id, chat_id))
         return self.db.execute("DELETE FROM goals WHERE id=? AND chat_id=?", (goal_id, chat_id)).rowcount == 1
+
+    def list_deposits(self, chat_id: int) -> list[tuple[str, date, int]]:
+        """(nama target, tanggal, jumlah) semua setoran/penarikan milik chat_id."""
+        rows = self.db.query(
+            "SELECT g.name AS name, d.on_date AS on_date, d.amount AS amount FROM goal_deposits d"
+            " JOIN goals g ON g.id = d.goal_id WHERE d.chat_id=? AND g.chat_id=? ORDER BY d.on_date, d.id",
+            (chat_id, chat_id))
+        return [(r["name"], date.fromisoformat(r["on_date"]), r["amount"]) for r in rows]
 
     def deposits_between(self, chat_id: int, start: date, end_exclusive: date) -> int:
         rows = self.db.query(

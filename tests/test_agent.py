@@ -177,7 +177,7 @@ def test_system_prompt_has_date_and_rules():
 def test_tool_specs_are_read_only_and_well_formed():
     names = {t["name"] for t in agent.TOOL_SPECS}
     assert names == {"cari_transaksi", "arus_kas", "status_anggaran", "daftar_tagihan",
-                     "uang_aman_harian", "target_tabungan", "utang_piutang"}
+                     "uang_aman_harian", "target_tabungan", "utang_piutang", "catatan_rutin"}
     for t in agent.TOOL_SPECS:
         assert t["parameters"]["type"] == "object" and t["description"]
     assert "chat_id" not in json.dumps(agent.TOOL_SPECS)  # model tak bisa memilih pengguna

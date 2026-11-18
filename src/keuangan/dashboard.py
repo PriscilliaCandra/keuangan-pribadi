@@ -8,6 +8,7 @@ from typing import Any
 from . import bills as bills_mod
 from . import budget
 from . import debts as debts_mod
+from . import routines as routines_mod
 from . import plans as plans_mod
 from .agent import resolve_period
 from .categories import CATEGORIES, INCOME_CATEGORIES
@@ -129,6 +130,9 @@ def build_summary(db: Database, chat_id: int, period: str, today: date) -> dict[
             "saved": safe.saved},
         "goals": goals,
         "debts": _debts_payload(db, chat_id, today),
+        "recurring": [{"name": r.name, "kind": r.kind, "amount": r.amount, "category": r.category,
+                       "day": r.day, "active": r.active}
+                      for r in routines_mod.RecurringStore(db).list(chat_id)],
         "bills": {"items": bill_rows,
                   "monthly_total": sum(bills_mod.monthly_cost(b) for b in active_bills)},
         "categories": {"expense": CATEGORIES, "income": INCOME_CATEGORIES},

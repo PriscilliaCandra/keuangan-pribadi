@@ -17,6 +17,7 @@ from . import bills as bills_mod
 from . import budget
 from . import debts as debts_mod
 from . import plans as plans_mod
+from . import routines as routines_mod
 from .categories import exact_category, exact_income_category, match_category, match_income_category
 from .db import Database
 from .formatting import rupiah
@@ -81,6 +82,12 @@ TOOL_SPECS: list[dict[str, Any]] = [
         "description": ("Utang-piutang yang masih terbuka: siapa berutang padaku, kepada siapa aku berutang, "
                         "jumlah, catatan, dan jatuh tempo. Pakai untuk 'siapa yang belum bayar', "
                         "'aku utang ke siapa', 'total piutang'."),
+        "parameters": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "catatan_rutin",
+        "description": ("Catatan rutin otomatis tiap bulan (kos, cicilan, gaji): nama, jumlah, tanggal, "
+                        "aktif/dijeda. Pakai untuk 'apa saja yang otomatis', 'pengeluaran rutinku'."),
         "parameters": {"type": "object", "properties": {}},
     },
     {
@@ -198,7 +205,7 @@ class QueryTools:
             "cari_transaksi": self.cari_transaksi, "arus_kas": self.arus_kas,
             "status_anggaran": self.status_anggaran, "daftar_tagihan": self.daftar_tagihan,
             "uang_aman_harian": self.uang_aman_harian, "target_tabungan": self.target_tabungan,
-            "utang_piutang": self.utang_piutang,
+            "utang_piutang": self.utang_piutang, "catatan_rutin": self.catatan_rutin,
         }
         handler = handlers.get(name)
         if handler is None:
@@ -332,6 +339,13 @@ class QueryTools:
         owed_to_me, owed_by_me = self.debts.totals(self.chat_id)
         return {"orang_berutang_padaku": rows(debts_mod.PIUTANG), "total_piutang_rp": rupiah(owed_to_me),
                 "aku_berutang_ke": rows(debts_mod.UTANG), "total_utang_rp": rupiah(owed_by_me)}
+
+    def catatan_rutin(self, args: dict) -> dict[str, Any]:
+        items = routines_mod.RecurringStore(self.db).list(self.chat_id)
+        if not items:
+            return {"catatan": "Belum ada catatan rutin."}
+        return {"rutin": [{"nama": r.name, "jenis": r.kind, "jumlah_rp": rupiah(r.amount),
+                           "kategori": r.category, "tanggal": r.day, "aktif": r.active} for r in items]}
 
     def target_tabungan(self, args: dict) -> dict[str, Any]:
         goals = self.plans.list_goals(self.chat_id)

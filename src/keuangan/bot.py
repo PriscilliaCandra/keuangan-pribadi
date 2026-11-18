@@ -195,10 +195,11 @@ async def cmd_ekspor(update: Update, context: Ctx) -> None:
         await _reply(update, result)
         return
     filename, data = result
+    caption = ("📦 Semua datamu (transaksi, anggaran, tagihan, target, utang, catatan rutin). "
+               "Ekstrak lalu buka CSV dengan Excel/Google Sheets." if filename.endswith(".zip") else
+               "📤 Buka dengan Excel/Google Sheets. Kolom: jenis, id, tanggal, jumlah, kategori, catatan, sumber.")
     await update.effective_message.reply_document(
-        document=io.BytesIO(data), filename=filename,
-        caption="📤 Buka dengan Excel/Google Sheets. Kolom: jenis, id, tanggal, jumlah, kategori, catatan, sumber.",
-    )
+        document=io.BytesIO(data), filename=filename, caption=caption)
 
 
 async def cmd_scan_email(update: Update, context: Ctx) -> None:
@@ -225,6 +226,13 @@ async def job_daily(context: Ctx) -> None:
     svc = _svc(context)
     for chat_id in svc.access.active_chat_ids():
         texts = await asyncio.to_thread(svc.daily_job, chat_id)
+        await _send_all(context, chat_id, texts)
+
+
+async def job_evening(context: Ctx) -> None:
+    svc = _svc(context)
+    for chat_id in svc.plans.evening_chat_ids() & set(svc.access.active_chat_ids()):
+        texts = await asyncio.to_thread(svc.evening_job, chat_id)
         await _send_all(context, chat_id, texts)
 
 
@@ -311,6 +319,8 @@ def build_app(cfg: Config, svc: Service) -> Application:
     app.add_handler(CommandHandler("langganan", _command("bills_command", kind="langganan")))
     app.add_handler(CommandHandler("pakai", _command("confirm_command")))
     app.add_handler(CommandHandler("batal", _command("cancel_command")))
+    app.add_handler(CommandHandler("rutin", _command("rutin_command")))
+    app.add_handler(CommandHandler("ingatkan", _command("ingatkan_command")))
     app.add_handler(CommandHandler("scan_email", cmd_scan_email))
     app.add_handler(CallbackQueryHandler(on_confirm, pattern=r"^(save|drop):"))
     app.add_handler(MessageHandler(filters.PHOTO, on_photo))
@@ -320,6 +330,9 @@ def build_app(cfg: Config, svc: Service) -> Application:
     tz = ZoneInfo(cfg.timezone)
     app.job_queue.run_daily(job_daily, time=dtime(8, 0, tzinfo=tz), name="harian")
     app.job_queue.run_daily(job_weekly, time=dtime(19, 0, tzinfo=tz), name="mingguan")
+    app.job_queue.run_daily(job_evening, time=dtime(20, 30, tzinfo=tz), name="malam")
+    # Laptop bisa mati pukul 08:00: jalankan sekali tak lama setelah bot menyala (aman diulang).
+    app.job_queue.run_once(job_daily, when=90, name="harian-awal")
     app.job_queue.run_daily(job_backup, time=dtime(3, 30, tzinfo=tz), name="cadangan")
     if cfg.email_enabled:
         app.job_queue.run_repeating(job_email, interval=cfg.email_scan_hours * 3600,

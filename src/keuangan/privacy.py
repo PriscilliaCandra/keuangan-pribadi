@@ -2,7 +2,7 @@
 ubah di sini bila perilakunya berubah dan naikkan VERSION agar persetujuan diminta ulang."""
 from __future__ import annotations
 
-VERSION = "2026-11-beta4"  # dinaikkan: catatan utang-piutang & patungan (nama orang lain) ditambahkan
+VERSION = "2026-11-beta5"  # dinaikkan: catatan rutin otomatis, pengingat malam, ekspor semua data
 
 
 def summary(ai_note: str) -> str:
@@ -10,7 +10,7 @@ def summary(ai_note: str) -> str:
         "🔒 Privasi & data (versi beta)\n\n"
         "Yang disimpan di server: ID chat dan nama Telegram-mu, catatan pengeluaran dan "
         "pemasukan (jumlah, kategori, catatan, tanggal), anggaran, tagihan/langganan, target tabungan, "
-        "tanggal gajian, catatan utang-piutang dan patungan (nama teman yang kamu ketik sendiri beserta "
+        "tanggal gajian, catatan rutin otomatis (nama, jumlah, tanggal), pilihan pengingat malam, catatan utang-piutang dan patungan (nama teman yang kamu ketik sendiri beserta "
         "jumlahnya; sebaiknya pakai nama panggilan), dan "
         "hitungan pemakaian AI harian (hanya angka, tanpa isi; dibuang otomatis setelah 7 hari, "
         "termasuk bila kamu menghapus akun, untuk mencegah penyalahgunaan kuota).\n"
@@ -19,7 +19,7 @@ def summary(ai_note: str) -> str:
         "Siapa yang bisa melihat: bot ini tidak punya fitur bagi admin untuk membuka catatanmu. "
         "Namun pemilik server secara teknis memegang databasenya. Ini layanan beta, jadi jangan "
         "mencatat hal yang sangat sensitif.\n\n"
-        "Kontrolmu: /ekspor (unduh semua catatan), /hapus_akun (hapus semua datamu), "
+        "Kontrolmu: /ekspor semua (unduh seluruh datamu dalam ZIP), /hapus_akun (hapus semua datamu), "
         "/privasi (pesan ini).\n"
         "Bot ini alat bantu mencatat, bukan nasihat keuangan.\n\n"
         "Dengan mengetik /setuju, kamu menyetujui hal-hal di atas."

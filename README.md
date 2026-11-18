@@ -69,7 +69,17 @@ tetapi **tidak punya perintah untuk membaca catatan pengguna**. Lihat [docs/DEPL
   tulis eksplisit untuk catatan terakhir: `ubah jadi 40rb`, `kategorinya transport`, `harusnya 40rb`,
   `hapus yang tadi`. Kalimat seperti `ganti oli 150rb` tetap dicatat sebagai pengeluaran.
 - `/riwayat` (dengan ID), `/edit 12 kategori transport`, `/edit 12 nominal 40rb`, `/hapus 12`.
-- `/ekspor` mengirim file CSV (bulan ini / `semua` / `2026-10`) untuk Excel atau Google Sheets.
+- `/ekspor` mengirim CSV transaksi (bulan ini / `2026-10`); `/ekspor semua` mengirim **ZIP berisi seluruh datamu**
+  (transaksi, anggaran, tagihan, target + setoran, utang + pembayaran, catatan rutin, pengaturan).
+
+**Catatan rutin & pengingat malam**
+- `kos 1,5jt tiap bulan tgl 1` atau `/rutin gaji 8jt tgl 25 masuk` → dicatat otomatis tiap bulan
+  (tanggal 31 jatuh di hari terakhir bulan pendek). `/rutin` melihat daftar; `/rutin jeda|lanjut|hapus <nama>`.
+- Bila tanggalnya bulan ini sudah lewat, bulan ini tidak dicatat otomatis (mencegah ganda); mulai bulan depan.
+- Bot dinyalakan terlambat/laptop mati pukul 08:00? Pekerjaan harian dijalankan lagi ±90 detik setelah bot
+  menyala dan tak pernah mencatat dua kali.
+- `/ingatkan on` → pukul 20:30 diingatkan bila hari itu belum ada catatan (hanya bila kamu aktif mencatat
+  dalam 14 hari terakhir). Bawaan: mati.
 
 **Tagihan & langganan**
 - Manual: `/tagihan listrik 350rb tgl 20`, `/langganan netflix 54rb tgl 5`, tahunan:
@@ -94,7 +104,8 @@ tetapi **tidak punya perintah untuk membaca catatan pengguna**. Lihat [docs/DEPL
 | `/riwayat` | 10 catatan terakhir + ID (pemasukan berawalan `m`) |
 | `/edit <id> <kategori\|nominal\|tanggal\|catatan> <nilai>` | ubah catatan |
 | `/hapus` · `/hapus <id>` | hapus catatan terakhir / per ID |
-| `/ekspor [semua\|2026-10]` | unduh CSV |
+| `/ekspor [2026-10]` · `/ekspor semua` | unduh CSV bulan · ZIP seluruh data |
+| `/rutin [jeda\|lanjut\|hapus <nama>]` · `/ingatkan on\|off` | catatan otomatis bulanan · pengingat malam |
 | `/tanya <pertanyaan>` | tanya data keuanganmu |
 | `/dashboard` | tautan masuk dashboard web (sekali pakai) |
 | `/anggaran` · `/anggaran makanan 1,5jt` · `/anggaran total 5jt` · `/anggaran hapus makanan` | anggaran |

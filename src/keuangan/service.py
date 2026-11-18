@@ -12,6 +12,8 @@ from typing import Any, Callable
 
 from . import bills as bills_mod
 from . import agent, budget, email_scan, ledger, reports
+from . import export as export_mod
+from . import routines as routines_mod
 from . import debts as debts_mod
 from . import plans as plans_mod
 from .access import AccessControl, AiBusy, QuotaExceeded
@@ -35,7 +37,7 @@ HELP = """Halo! Aku pencatat keuanganmu.
    Tanpa reply: "ubah jadi 40rb", "kategorinya transport" (untuk catatan terakhir).
    Atau /edit 12 kategori transport · /edit 12 nominal 40rb
 🗑️ "hapus yang tadi" · /hapus — catatan terakhir · /hapus 12 — per ID
-📤 /ekspor — CSV bulan ini · /ekspor semua · /ekspor 2026-10
+📤 /ekspor — CSV bulan ini · /ekspor 2026-10 · /ekspor semua (ZIP semua datamu)
 🤖 /tanya berapa pengeluaran kopi bulan ini? (atau ketik pertanyaannya langsung)
 📈 /dashboard — grafik pemasukan & pengeluaran (tautan masuk sekali pakai)
 
@@ -43,6 +45,7 @@ HELP = """Halo! Aku pencatat keuanganmu.
 🎯 /target liburan bali 5jt sampai 2027-03 · "nabung 500rb liburan" · /tarik liburan 200rb
 💸 Utang-piutang: "Budi utang 50rb makan siang" · "utang ke Siti 30rb" · "Budi bayar 20rb" · /utang · /lunas Budi · /tagih Budi
 🍽️ Patungan: "patungan makan malam 240rb dengan Budi, Siti, Ani" (ada pratinjau, balas "ya")
+🔁 Catatan rutin otomatis: "kos 1,5jt tiap bulan tgl 1" · /rutin (lihat/jeda/hapus) · /ingatkan on (pengingat malam)
 💡 Nominal bisa ditulis sehari-hari: goceng, ceban, gocap, cepek, sejuta
 
 💰 /anggaran — lihat anggaran
@@ -161,7 +164,7 @@ class Service:
         saved = self._saving_from_text(chat_id, text)
         if saved is not None:
             return saved
-        for handler in (self._split_from_text, self._debt_from_text):
+        for handler in (self._recurring_from_text, self._split_from_text, self._debt_from_text):
             handled = handler(chat_id, text)
             if handled is not None:
                 return handled
@@ -280,7 +283,7 @@ class Service:
             start, end = budget.month_bounds(today)
             label = today.strftime("%Y-%m")
         elif word == "semua":
-            start, end, label = date(2000, 1, 1), today + timedelta(days=1), "semua"
+            return "keuangan-semua.zip", export_mod.export_zip(self.db, chat_id, today)
         elif re.fullmatch(r"\d{4}-\d{2}", word):
             try:
                 start, end = budget.month_bounds(date.fromisoformat(word + "-01"))
@@ -673,10 +676,90 @@ class Service:
         return (f"🗑️ {bill.name} ditandai sudah berhenti — pengingat dimatikan. "
                 f"Ingat: pastikan juga sudah dibatalkan di penyedianya.")
 
-    def daily_job(self, chat_id: int) -> list[str]:
-        """Pesan harian: pengingat jatuh tempo (+ tinjauan langganan tiap tanggal 1)."""
+    # ---------- catatan rutin & pengingat malam ----------
+    def rutin_command(self, chat_id: int, args: str = "") -> str:
+        store = routines_mod.RecurringStore(self.db)
+        word, _, rest = args.strip().partition(" ")
+        word = word.lower()
+        if not args.strip():
+            return routines_mod.format_list(store.list(chat_id))
+        if word in ("hapus", "jeda", "lanjut"):
+            item = store.find(chat_id, rest)
+            if item is None:
+                return "Nama tidak ditemukan. Lihat daftar di /rutin."
+            if word == "hapus":
+                store.delete(chat_id, item.id)
+                return f"🗑️ Catatan rutin '{item.name}' dihapus. Catatan yang sudah tercatat tetap ada."
+            store.set_active(chat_id, item.id, word == "lanjut")
+            return (f"▶️ '{item.name}' dilanjutkan." if word == "lanjut"
+                    else f"⏸ '{item.name}' dijeda — tak dicatat otomatis sampai /rutin lanjut {item.name}.")
+        spec = routines_mod.parse_recurring_args(args)
+        if isinstance(spec, str):
+            return spec
+        try:
+            item, created = store.add(chat_id, spec.name, spec.kind, spec.amount, spec.category,
+                                      spec.day, self.clock())
+        except ValueError as exc:
+            return f"Tidak bisa disimpan: {exc}."
+        kind = "pemasukan" if item.kind == routines_mod.MASUK else "pengeluaran"
+        lines = [f"🔁 {'Dibuat' if created else 'Diperbarui'}: {item.name} — {rupiah(item.amount)} "
+                 f"({kind}, {item.category}) dicatat otomatis tiap tgl {item.day}."]
+        if item.last_run_month == routines_mod.month_key(self.clock()):
+            lines.append("Bulan ini tidak dicatat otomatis karena tanggalnya sudah lewat — "
+                         "catat manual bila belum. Mulai bulan depan otomatis.")
+        return "\n".join(lines)
+
+    def _recurring_from_text(self, chat_id: int, text: str) -> str | None:
+        args = routines_mod.recurring_args_from_text(text)
+        if args is None:
+            return None
+        spec = routines_mod.parse_recurring_args(args)
+        return self.rutin_command(chat_id, args) if not isinstance(spec, str) else None
+
+    def ingatkan_command(self, chat_id: int, args: str = "") -> str:
+        word = args.strip().lower()
+        if word in ("on", "nyala", "aktif", "ya"):
+            self.plans.set_evening(chat_id, True)
+            return "🔔 Pengingat malam aktif: tiap 20:30 aku ingatkan bila hari ini belum ada catatan. Matikan: /ingatkan off"
+        if word in ("off", "mati", "matikan", "tidak"):
+            self.plans.set_evening(chat_id, False)
+            return "🔕 Pengingat malam dimatikan."
+        state = "aktif" if self.plans.get_evening(chat_id) else "mati"
+        return f"Pengingat malam (20:30) sedang {state}. Ubah: /ingatkan on · /ingatkan off"
+
+    def run_recurring(self, chat_id: int) -> list[str]:
+        """Catat otomatis yang jatuh tempo bulan ini. Klaim atomik dulu supaya tak pernah dobel."""
         today = self.clock()
-        messages: list[str] = []
+        store = routines_mod.RecurringStore(self.db)
+        messages = []
+        for item, on_date in store.due(chat_id, today):
+            if not store.claim(chat_id, item.id, today):
+                continue
+            if item.kind == routines_mod.MASUK:
+                result = self.save_income(chat_id, ParsedIncome(item.amount, item.name, on_date,
+                                                               item.category), "rutin")
+            else:
+                result = self.save_expense(chat_id, ParsedExpense(item.amount, item.name,
+                                                                  item.category, on_date), "rutin")
+            messages.append("🔁 Rutin otomatis\n" + result)
+        return messages
+
+    def evening_job(self, chat_id: int) -> list[str]:
+        """Ingatkan bila hari ini belum mencatat, hanya untuk yang aktif mencatat 14 hari terakhir."""
+        today = self.clock()
+        day_start = today.isoformat()
+        if self.db.count_chat_entries_since(chat_id, day_start) > 0:
+            return []
+        recent = (today - timedelta(days=14)).isoformat()
+        if self.db.count_chat_entries_since(chat_id, recent) == 0:
+            return []
+        return ["🌙 Belum ada catatan hari ini. Ada jajan atau pengeluaran yang belum dicatat? "
+                "Ketik saja, mis. \"makan malam 30rb\". (Matikan: /ingatkan off)"]
+
+    def daily_job(self, chat_id: int) -> list[str]:
+        """Pesan harian: catatan rutin, pengingat jatuh tempo (+ tinjauan langganan tiap tanggal 1)."""
+        today = self.clock()
+        messages: list[str] = self.run_recurring(chat_id)
         reminders = bills_mod.due_reminders(self.db, chat_id, today, self.reminder_days)
         if reminders:
             messages.append(bills_mod.format_reminders(reminders))

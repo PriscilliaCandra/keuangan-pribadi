@@ -153,6 +153,15 @@ class DebtStore:
             self.db.execute("DELETE FROM debts WHERE id=? AND chat_id=?", (debt_id, chat_id))
         return len(ids)
 
+    def list_payments(self, chat_id: int) -> list[tuple[str, str, date, int]]:
+        """(orang, arah, tanggal, jumlah) semua pembayaran milik chat_id."""
+        rows = self.db.query(
+            "SELECT d.person AS person, d.direction AS direction, p.on_date AS on_date, p.amount AS amount"
+            " FROM debt_payments p JOIN debts d ON d.id = p.debt_id WHERE p.chat_id=? AND d.chat_id=?"
+            " ORDER BY p.on_date, p.id", (chat_id, chat_id))
+        return [(r["person"], r["direction"], date.fromisoformat(r["on_date"]), r["amount"])
+                for r in rows]
+
     def totals(self, chat_id: int) -> tuple[int, int]:
         """(orang berutang padaku, aku berutang)."""
         debts = self.list(chat_id)

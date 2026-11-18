@@ -235,6 +235,18 @@
     fill($("#debts-by-me"), x.by_me, "Tidak ada.");
   }
 
+  function renderRecurring(d) {
+    const host = $("#recurring");
+    host.replaceChildren();
+    if (!d.recurring.length) { host.append(h("div", { class: "empty", text: "Belum ada. Di Telegram: kos 1,5jt tiap bulan tgl 1" })); return; }
+    for (const r of d.recurring) {
+      host.append(h("div", { class: "bill" },
+        h("div", {}, h("div", { text: r.name }),
+          h("div", { class: "sub", text: `Tiap tgl ${r.day} · ${r.category}${r.active ? "" : " · dijeda"}` })),
+        h("div", { class: "amt", text: `${r.kind === "masuk" ? "+" : ""}${rp(r.amount)}` })));
+    }
+  }
+
   function renderGoals(d) {
     const host = $("#goals");
     host.replaceChildren();
@@ -331,6 +343,7 @@
     renderSafe(d);
     renderGoals(d);
     renderDebts(d);
+    renderRecurring(d);
     syncFilters();
   }
 

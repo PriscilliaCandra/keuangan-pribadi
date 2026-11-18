@@ -117,7 +117,23 @@ CREATE TABLE IF NOT EXISTS sessions (
 
 CREATE TABLE IF NOT EXISTS user_settings (
   chat_id INTEGER PRIMARY KEY,
-  payday INTEGER CHECK (payday BETWEEN 1 AND 31)
+  payday INTEGER CHECK (payday BETWEEN 1 AND 31),
+  evening_reminder INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS recurring (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  chat_id INTEGER NOT NULL,
+  name TEXT NOT NULL,
+  name_key TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('keluar', 'masuk')),
+  amount INTEGER NOT NULL CHECK (amount > 0),
+  category TEXT NOT NULL,
+  day INTEGER NOT NULL CHECK (day BETWEEN 1 AND 31),
+  active INTEGER NOT NULL DEFAULT 1,
+  last_run_month TEXT,
+  created_on TEXT NOT NULL,
+  UNIQUE (chat_id, name_key)
 );
 
 CREATE TABLE IF NOT EXISTS goals (
@@ -168,7 +184,7 @@ CREATE INDEX IF NOT EXISTS ix_debt_payments_debt ON debt_payments(debt_id);
 # Pengecualian disengaja: `ai_usage` (hanya chat_id + tanggal + hitungan, tanpa isi) disimpan sampai
 # 7 hari agar kuota AI harian tak bisa direset dengan hapus-akun lalu daftar ulang; lihat privacy.py.
 USER_DATA_TABLES = ("expenses", "incomes", "budgets", "budget_alerts", "bills",
-                    "goal_deposits", "goals", "user_settings", "debt_payments", "debts",
+                    "goal_deposits", "goals", "user_settings", "debt_payments", "debts", "recurring",
                     "processed_emails", "login_tokens", "sessions", "users")
 
 
@@ -265,6 +281,10 @@ class Database:
 
     def _migrate(self) -> None:
         """Migrasi ringan untuk database yang dibuat versi lama."""
+        settings_cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(user_settings)")}
+        if settings_cols and "evening_reminder" not in settings_cols:
+            self._conn.execute(
+                "ALTER TABLE user_settings ADD COLUMN evening_reminder INTEGER NOT NULL DEFAULT 0")
         columns = {r["name"] for r in self._conn.execute("PRAGMA table_info(incomes)")}
         if "category" not in columns:
             self._conn.execute(
@@ -404,6 +424,15 @@ class Database:
         rows = sorted([*ex, *inc], key=lambda r: (r["created_at"], r["id"]), reverse=True)[:limit]
         return [("keluar", self._expense(r)) if r["kind"] == "keluar" else ("masuk", self._income(r))
                 for r in rows]
+
+    def count_chat_entries_since(self, chat_id: int, since_iso: str) -> int:
+        """Jumlah catatan (pengeluaran + pemasukan) satu pengguna yang DIBUAT sejak `since_iso`."""
+        total = 0
+        for table in ("expenses", "incomes"):  # nama tabel dari konstanta
+            total += self.query(
+                f"SELECT COUNT(*) AS n FROM {table} WHERE chat_id=? AND created_at >= ?",
+                (chat_id, since_iso))[0]["n"]
+        return total
 
     def count_entries_since(self, days: int) -> int:
         """Jumlah catatan (pengeluaran + pemasukan, semua pengguna) dibuat dalam `days` hari terakhir.
