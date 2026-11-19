@@ -90,3 +90,24 @@ publik membawa kewajiban tambahan. Hal-hal yang perlu ditinjau **ahli hukum** (s
 - Tidak ada pembayaran otomatis, paket, atau batas fitur per paket.
 - Fitur baca email hanya untuk admin (satu kotak surat). Mengelola kredensial email banyak orang tidak ditawarkan.
 - Satu proses bot; belum ada pemantauan/alarm otomatis (pantau log dan `/statistik`).
+
+## Dashboard dari HP tanpa biaya: Cloudflare Quick Tunnel
+
+Gratis, tanpa akun dan tanpa domain. Laptop tetap harus menyala.
+
+1. Pasang sekali: `winget install Cloudflare.cloudflared`
+2. Jalankan (menghentikan bot lama, membuka tunnel, lalu menyalakan bot dengan alamat publik):
+
+   ```
+   powershell -ExecutionPolicy Bypass -File scripts\jalankan-publik.ps1
+   ```
+3. Skrip mencetak alamat `https://xxxx.trycloudflare.com`. Kirim `/dashboard` di Telegram dan buka tautannya dari HP.
+
+Catatan:
+- Alamat **berubah** tiap skrip dijalankan; tautan lama tak berlaku. Untuk alamat tetap, pakai Named Tunnel
+  (akun Cloudflare gratis + domain) lalu isi `DASHBOARD_PUBLIC_URL` di `.env`.
+- Skrip mengisi `DASHBOARD_PUBLIC_URL` dan `DASHBOARD_TRUST_PROXY=true` lewat variabel lingkungan, jadi `.env` tidak diubah.
+- Yang melindungi dashboard saat publik: tautan masuk sekali pakai (10 menit), sesi di cookie HttpOnly+Secure+SameSite=Strict,
+  pembatas percobaan login per IP, pemeriksaan header Host, CSP ketat, dan semua data disaring per pengguna.
+- Server Python hanya mendengarkan 127.0.0.1; yang terbuka ke internet hanyalah tunnel.
+- Matikan akses publik: hentikan proses `cloudflared`, atau jalankan bot biasa tanpa skrip ini.
