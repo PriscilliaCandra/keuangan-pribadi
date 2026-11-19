@@ -53,13 +53,18 @@ tetapi **tidak punya perintah untuk membaca catatan pengguna**. Lihat [docs/DEPL
   Sisa pembulatan ditanggung pembayar, jadi jumlahnya selalu pas.
 - Utang-piutang dicatat **terpisah** dari pengeluaran/pemasukan (meminjamkan uang bukan belanja).
 
-**Dashboard web (hanya-baca, login per pengguna)**
+**Dashboard web (login per pengguna; bisa melihat DAN mencatat)**
 - Kirim `/dashboard` di Telegram → tautan masuk **sekali pakai (10 menit)**; tekan "Masuk" di halamannya.
   Sesi berlaku 7 hari dan bisa diakhiri dengan tombol Keluar.
 - Kartu selisih/pemasukan/pengeluaran/persen ditabung (dengan perbandingan periode sebelumnya),
   grafik kolom pemasukan vs pengeluaran (harian atau bulanan), batang kategori pengeluaran dan
   pemasukan (klik untuk memfilter transaksi), meter anggaran, daftar tagihan, dan tabel transaksi
   dengan filter. Ada tampilan tabel, tooltip, mode terang/gelap, dan layout ponsel.
+- **Catat & tanya dari web**: kotak chat menerima kalimat bebas persis seperti di Telegram (`makan siang 35rb`,
+  `Budi utang 50rb`, atau pertanyaan untuk AI), ada formulir (jenis, jumlah, kategori, tanggal, catatan), dan
+  tombol 🗑 hapus per transaksi. Keamanan jalur tulis: sesi wajib, JSON saja, header khusus + cek Origin
+  (anti-CSRF), validasi ketat di server, chat_id selalu dari sesi, batas laju per pengguna (60 catat/menit,
+  15 chat/menit), dan kuota AI yang sama dengan Telegram.
 - Kategori pemasukan: Gaji, Bonus & THR, Freelance & Usaha, Investasi, Lainnya (terisi otomatis dari
   kata kunci, bisa dikoreksi dengan reply atau `/edit m1 kategori bonus`).
 

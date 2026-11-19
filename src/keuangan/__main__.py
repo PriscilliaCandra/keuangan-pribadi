@@ -16,7 +16,7 @@ from .llm import make_llm
 from .service import Service
 
 
-def start_dashboard(cfg: Config, db: Database, access: AccessControl, clock) -> str | None:
+def start_dashboard(cfg: Config, db: Database, access: AccessControl, clock, service=None) -> str | None:
     """Nyalakan dashboard; kembalikan alamat dasar untuk tautan login, atau None bila mati/gagal."""
     if not cfg.dashboard_port:
         return None
@@ -25,7 +25,8 @@ def start_dashboard(cfg: Config, db: Database, access: AccessControl, clock) -> 
         server = DashboardServer(
             db, access.accounts, clock, port=cfg.dashboard_port,
             extra_hosts=cfg.dashboard_host_names, secure_cookie=base.startswith("https://"),
-            session_ttl=cfg.dashboard_session_days * 86400, trust_proxy=cfg.dashboard_trust_proxy)
+            session_ttl=cfg.dashboard_session_days * 86400, trust_proxy=cfg.dashboard_trust_proxy,
+            service=service)
     except OSError as exc:  # mis. port dipakai program lain: bot tetap jalan tanpa dashboard
         logging.getLogger(__name__).warning("Dashboard tidak aktif (port %s): %s", cfg.dashboard_port, exc)
         return None
@@ -61,7 +62,7 @@ def main() -> int:
                            registration=cfg.registration_mode, max_users=cfg.max_users,
                            signups_per_hour=cfg.signups_per_hour)
     svc = Service(db, llm, clock, cfg.reminder_days, fetcher, access)
-    svc.dashboard_base_url = start_dashboard(cfg, db, access, clock)
+    svc.dashboard_base_url = start_dashboard(cfg, db, access, clock, svc)
 
     logging.getLogger(__name__).info(
         "Siap. AI=%s, scan email=%s, admin=%d, dashboard=%s, kuota AI=%d/hari, pendaftaran=%s (maks %d)",

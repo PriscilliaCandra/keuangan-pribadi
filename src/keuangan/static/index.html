@@ -32,6 +32,34 @@
         <div class="tile"><div class="label">Ditabung</div><div class="value" id="kpi-rate">–</div><div class="delta" id="kpi-count"></div></div>
       </section>
 
+      <section class="card" aria-labelledby="t-add">
+        <div class="card-head"><h2 id="t-add">Catat &amp; tanya</h2></div>
+        <form id="chat-form" class="add-row" autocomplete="off">
+          <input id="chat-text" class="grow" type="text" maxlength="500" required
+                 aria-label="Catat atau tanya"
+                 placeholder="makan siang 35rb · gaji 8jt · Budi utang 50rb · berapa pengeluaran kopi bulan ini?">
+          <button class="btn primary" type="submit" id="chat-send">Kirim</button>
+        </form>
+        <p id="chat-reply" class="reply" role="status" aria-live="polite" hidden></p>
+        <details class="manual">
+          <summary>Pakai formulir</summary>
+          <form id="entry-form" class="entry-grid" autocomplete="off">
+            <label>Jenis
+              <select id="e-kind"><option value="keluar">Pengeluaran</option><option value="masuk">Pemasukan</option></select></label>
+            <label>Jumlah (Rp)
+              <input id="e-amount" type="number" min="1" max="10000000000" step="1" inputmode="numeric" required></label>
+            <label>Kategori
+              <select id="e-cat"></select></label>
+            <label>Tanggal
+              <input id="e-date" type="date"></label>
+            <label class="wide">Catatan
+              <input id="e-desc" type="text" maxlength="200"></label>
+            <button class="btn primary" type="submit" id="e-save">Simpan</button>
+          </form>
+          <p id="entry-msg" class="reply" role="status" aria-live="polite" hidden></p>
+        </details>
+      </section>
+
       <section class="card" aria-labelledby="t-series">
         <div class="card-head">
           <h2 id="t-series">Pemasukan dan pengeluaran</h2>
@@ -115,7 +143,7 @@
         </div>
         <div class="table-wrap">
           <table class="tx">
-            <thead><tr><th>Tanggal</th><th>Catatan</th><th>Kategori</th><th class="num">Jumlah</th></tr></thead>
+            <thead><tr><th>Tanggal</th><th>Catatan</th><th>Kategori</th><th class="num">Jumlah</th><th><span class="sr">Hapus</span></th></tr></thead>
             <tbody id="tx-body"></tbody>
           </table>
         </div>

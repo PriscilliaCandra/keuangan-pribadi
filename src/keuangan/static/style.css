@@ -194,3 +194,19 @@ select, input { font: inherit; color: var(--ink); background: var(--surface); bo
 
 .insights { display: grid; gap: 10px; }
 .insight { margin: 0; padding: 10px 12px; border-radius: 8px; background: var(--surface-2, rgba(127,127,127,.08)); line-height: 1.45; }
+
+.add-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.add-row .grow { flex: 1; min-width: 200px; }
+.btn.primary { background: var(--ink); color: var(--surface); border-color: var(--ink); font-weight: 650; }
+.btn.primary:hover { background: var(--ink); opacity: 0.85; }
+.reply { margin: 10px 0 0; padding: 10px 12px; border-radius: 8px; background: var(--wash); white-space: pre-wrap; line-height: 1.45; }
+.reply.err { color: var(--expense); }
+.manual { margin-top: 12px; }
+.manual summary { cursor: pointer; color: var(--ink-2); font-size: 14px; }
+.entry-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-top: 10px; align-items: end; }
+.entry-grid label { display: grid; gap: 4px; font-size: 13px; color: var(--ink-2); }
+.entry-grid .wide { grid-column: 1 / 4; }
+.del { font: inherit; background: transparent; border: 0; cursor: pointer; opacity: 0.55; padding: 4px 6px; border-radius: 6px; }
+.del:hover, .del:focus-visible { opacity: 1; background: var(--wash); }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+@media (max-width: 820px) { .entry-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .entry-grid .wide { grid-column: 1 / -1; } }

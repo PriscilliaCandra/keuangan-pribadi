@@ -286,6 +286,73 @@
     }
   }
 
+  // ---------- catat & hapus (tulis) ----------
+  async function sendJSON(method, path, payload) {
+    const res = await fetch(path, { method, credentials: "same-origin", cache: "no-store",
+      headers: { "Content-Type": "application/json", "X-Requested-With": "kp" },
+      body: payload === undefined ? undefined : JSON.stringify(payload) });
+    if (res.status === 401) throw new Error("Sesi berakhir. Kirim /dashboard di Telegram untuk tautan masuk baru.");
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok && res.status !== 404) throw new Error(body.error || `Galat ${res.status}`);
+    return body;
+  }
+
+  function showNote(el, text, isErr) {
+    el.hidden = !text;
+    el.textContent = text || "";  // textContent: balasan memuat nama/catatan pengguna
+    el.classList.toggle("err", !!isErr);
+  }
+
+  function syncEntryCategories() {
+    const cats = state.data ? state.data.categories : { expense: [], income: [] };
+    const list = $("#e-kind").value === "masuk" ? cats.income : cats.expense;
+    $("#e-cat").replaceChildren(h("option", { value: "", text: "Otomatis" }), ...list.map((c) => h("option", { value: c, text: c })));
+  }
+
+  async function submitBusy(button, fn) {
+    button.disabled = true;
+    try { await fn(); } finally { button.disabled = false; }
+  }
+
+  $("#e-kind").addEventListener("change", syncEntryCategories);
+  $("#chat-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const input = $("#chat-text");
+    const text = input.value.trim();
+    if (!text) return;
+    showNote($("#chat-reply"), "Memproses…");
+    await submitBusy($("#chat-send"), async () => {
+      try {
+        const r = await sendJSON("POST", "/api/chat", { text });
+        showNote($("#chat-reply"), r.reply || "");
+        input.value = "";
+        await load();
+      } catch (err) { showNote($("#chat-reply"), err.message, true); }
+    });
+  });
+  $("#entry-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const payload = { kind: $("#e-kind").value, amount: Number($("#e-amount").value),
+      category: $("#e-cat").value, date: $("#e-date").value, description: $("#e-desc").value };
+    await submitBusy($("#e-save"), async () => {
+      try {
+        const r = await sendJSON("POST", "/api/entry", payload);
+        showNote($("#entry-msg"), r.message);
+        $("#e-amount").value = ""; $("#e-desc").value = "";
+        await load();
+      } catch (err) { showNote($("#entry-msg"), err.message, true); }
+    });
+  });
+
+  async function deleteEntry(t) {
+    if (!confirm(`Hapus catatan "${t.note}" (${rp(t.amount)})? Tidak bisa dibatalkan.`)) return;
+    try {
+      const r = await sendJSON("DELETE", `/api/entry/${encodeURIComponent(t.id)}`);
+      setStatus(r.message || "", !r.ok);
+      await load();
+    } catch (err) { setStatus(err.message, true); }
+  }
+
   // ---------- transaksi ----------
   function syncFilters() {
     const cats = state.data ? state.data.categories : { expense: [], income: [] };
@@ -306,7 +373,7 @@
       state.total = r.total;
       const body = $("#tx-body");
       body.replaceChildren();
-      if (!r.rows.length) body.append(h("tr", {}, h("td", { colspan: "4", class: "empty", text: "Tidak ada transaksi yang cocok." })));
+      if (!r.rows.length) body.append(h("tr", {}, h("td", { colspan: "5", class: "empty", text: "Tidak ada transaksi yang cocok." })));
       for (const t of r.rows) {
         body.append(h("tr", {},
           h("td", { text: fmtDate(t.date, true) }),
@@ -314,7 +381,9 @@
             document.createTextNode(t.note)),
           h("td", { text: t.category }),
           h("td", { class: "num", text: (t.kind === "masuk" ? "+" : "") + rp(t.amount),
-            "aria-label": `${t.kind === "masuk" ? "pemasukan" : "pengeluaran"} ${rp(t.amount)}` })));
+            "aria-label": `${t.kind === "masuk" ? "pemasukan" : "pengeluaran"} ${rp(t.amount)}` }),
+          h("td", {}, h("button", { type: "button", class: "del", title: "Hapus catatan ini",
+            "aria-label": `Hapus ${t.note}`, text: "🗑", onclick: () => deleteEntry(t) }))));
       }
       const from = r.total ? r.offset + 1 : 0, to = Math.min(r.total, r.offset + r.rows.length);
       $("#pager-info").textContent = `${from}–${to} dari ${r.total}`;
@@ -352,6 +421,7 @@
     renderRecurring(d);
     renderInsights(d);
     syncFilters();
+    syncEntryCategories();
   }
 
   async function load() {

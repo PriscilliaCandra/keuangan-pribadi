@@ -1,4 +1,4 @@
-"""Server dashboard web BACA-SAJA dengan login per pengguna.
+"""Server dashboard web dengan login per pengguna (lihat data + catat/hapus/chat).
 
 Alur masuk: pengguna mengirim /dashboard di Telegram -> bot memberi tautan berisi token sekali
 pakai (10 menit) -> halaman login menukarnya lewat POST (bukan saat GET, supaya pengambil
@@ -9,24 +9,31 @@ Keamanan:
 - Data selalu milik pemilik sesi (chat_id dari sesi, bukan dari parameter); pengguna yang
   diblokir kehilangan sesinya.
 - Token & sesi disimpan sebagai hash; pembatas percobaan login per IP; header Host diperiksa.
-- Satu-satunya metode tulis: POST /api/login dan /api/logout (JSON saja). Tak ada jalur mengubah
-  data keuangan. CSP ketat; berkas statis dari daftar putih.
+- Jalur tulis: POST /api/login|logout, POST /api/entry (catat), POST /api/chat (teks bebas seperti di
+  Telegram), DELETE /api/entry/<id>. Jalur tulis data butuh: sesi, JSON, header X-Requested-With,
+  Origin (bila ada) milik kita, dan dibatasi lajunya per pengguna. Isi divalidasi di web_entry.py;
+  chat_id selalu dari sesi. CSP ketat; berkas statis dari daftar putih.
 """
 from __future__ import annotations
 
 import json
 import logging
+import re
 import threading
 from datetime import date
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
 from urllib.parse import parse_qs, urlsplit
 
 from .accounts import AccountStore
+from . import ledger, web_entry
 from .dashboard import build_summary, list_transactions
 from .db import Database
 from .security import RateLimiter
+
+if TYPE_CHECKING:
+    from .service import Service
 
 log = logging.getLogger(__name__)
 
@@ -41,7 +48,9 @@ PRIVATE_FILES = {  # butuh sesi
     "/app.js": ("app.js", "text/javascript; charset=utf-8"),
 }
 COOKIE = "kp_session"
-MAX_BODY = 2048          # batas isi yang diproses
+WRITE_PATHS = ("/api/entry", "/api/chat")
+XHR_HEADER = ("X-Requested-With", "kp")  # tak bisa dikirim lintas-situs tanpa preflight CORS (tak kita izinkan)
+MAX_BODY = 4096          # batas isi yang diproses
 MAX_DRAIN = 64 * 1024    # sampai ini dibaca-dan-dibuang agar balasan 400 sampai ke klien
 
 
@@ -171,8 +180,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._json(403, {"error": "host tidak diizinkan"})
             return
         path = urlsplit(self.path).path
-        if path not in ("/api/login", "/api/logout"):
-            self._json(405, {"error": "hanya baca-saja"})
+        if path not in ("/api/login", "/api/logout", *WRITE_PATHS):
+            self._json(405, {"error": "metode tidak diizinkan"})
             return
         # Hanya JSON: formulir lintas-situs tidak bisa mengirim tipe ini tanpa preflight CORS.
         if not self.headers.get("Content-Type", "").startswith("application/json"):
@@ -187,7 +196,53 @@ class _Handler(BaseHTTPRequestHandler):
         except (ValueError, json.JSONDecodeError):
             self._json(400, {"error": "permintaan tidak valid"})
             return
-        (self._login if path == "/api/login" else self._logout)(body)
+        if path in WRITE_PATHS:
+            self._write(path, body)
+        else:
+            (self._login if path == "/api/login" else self._logout)(body)
+
+    # ---------- tulis data (butuh sesi) ----------
+    def _origin_ok(self) -> bool:
+        origin = self.headers.get("Origin")
+        if origin is None:
+            return True  # permintaan sama-asal sebagian browser tak mengirim Origin; SameSite=Strict + header khusus tetap berlaku
+        host = urlsplit(origin).netloc
+        return host in self.server.allowed_hosts
+
+    def _write_guard(self, kind: str) -> int | None:
+        """Kembalikan chat_id bila boleh menulis; kalau tidak, balasan galat sudah dikirim."""
+        chat = self._session_chat()
+        if chat is None:
+            self._json(401, {"error": "belum masuk. Kirim /dashboard di Telegram untuk tautan masuk."})
+            return None
+        if self.headers.get(XHR_HEADER[0]) != XHR_HEADER[1] or not self._origin_ok():
+            self._json(403, {"error": "permintaan ditolak"})
+            return None
+        limiter = self.server.chat_limiter if kind == "chat" else self.server.write_limiter
+        if limiter.blocked(chat):
+            self._json(429, {"error": "terlalu cepat, coba lagi sebentar"},
+                       {"Retry-After": str(limiter.retry_after(chat))})
+            return None
+        limiter.record(chat)
+        return chat
+
+    def _write(self, path: str, body: dict[str, Any]) -> None:
+        service = self.server.service
+        if service is None:
+            self._json(503, {"error": "fitur catat dari web tidak aktif"})
+            return
+        chat = self._write_guard("chat" if path == "/api/chat" else "entry")
+        if chat is None:
+            return
+        try:
+            if path == "/api/chat":
+                self._json(200, {"reply": service.handle_text(chat, web_entry.parse_chat(body))})
+                return
+            parsed = web_entry.parse_entry(body, self.server.clock())
+            save = service.save_income if hasattr(parsed, "received_on") else service.save_expense
+            self._json(200, {"ok": True, "message": save(chat, parsed, "web")})
+        except ValueError as exc:
+            self._json(400, {"error": str(exc)})
 
     def _login(self, body: dict[str, Any]) -> None:
         ip, limiter = self._client_ip(), self.server.login_limiter
@@ -214,9 +269,29 @@ class _Handler(BaseHTTPRequestHandler):
 
     # metode lain ditolak
     def _deny(self) -> None:
-        self._json(405, {"error": "hanya baca-saja"})
+        self._json(405, {"error": "metode tidak diizinkan"})
 
-    do_PUT = do_DELETE = do_PATCH = _deny  # noqa: N815
+    def do_DELETE(self) -> None:  # noqa: N802
+        if not self._host_ok():
+            self._json(403, {"error": "host tidak diizinkan"})
+            return
+        path = urlsplit(self.path).path
+        prefix = "/api/entry/"
+        if not path.startswith(prefix) or self.server.service is None:
+            self._deny()
+            return
+        chat = self._write_guard("entry")
+        if chat is None:
+            return
+        token = path[len(prefix):]
+        if not re.fullmatch(r"m?\d{1,12}", token):
+            self._json(400, {"error": "ID tidak valid"})
+            return
+        message = ledger.delete_entry(self.server.db, chat, token)
+        ok = message.startswith("🗑️")
+        self._json(200 if ok else 404, {"ok": ok, "message": message})
+
+    do_PUT = do_PATCH = _deny  # noqa: N815
 
 
 def _arg(query: dict[str, list[str]], name: str, default: str) -> str:
@@ -236,7 +311,7 @@ class DashboardServer(ThreadingHTTPServer):
     def __init__(self, db: Database, accounts: AccountStore, clock: Callable[[], date],
                  port: int = 8765, host: str = "127.0.0.1", extra_hosts: frozenset[str] = frozenset(),
                  secure_cookie: bool = False, session_ttl: int = 7 * 86400,
-                 trust_proxy: bool = False):
+                 trust_proxy: bool = False, service: "Service | None" = None):
         if host not in ("127.0.0.1", "localhost", "::1"):
             raise ValueError("dashboard hanya boleh mendengarkan alamat lokal; "
                              "untuk akses publik pasang proxy TLS di depannya")
@@ -246,6 +321,9 @@ class DashboardServer(ThreadingHTTPServer):
         p = self.server_port
         self.allowed_hosts = {f"localhost:{p}", f"127.0.0.1:{p}", f"[::1]:{p}", *extra_hosts}
         self.login_limiter = RateLimiter(max_events=10, window_s=300)  # 10 gagal / 5 menit / IP
+        self.service = service
+        self.write_limiter = RateLimiter(max_events=60, window_s=60)   # catat/hapus per pengguna
+        self.chat_limiter = RateLimiter(max_events=15, window_s=60)    # chat (bisa memanggil AI)
         self._thread: threading.Thread | None = None
 
     def start(self) -> None:
