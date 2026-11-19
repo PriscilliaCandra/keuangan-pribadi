@@ -170,6 +170,10 @@ class Service:
             handled = handler(chat_id, text)
             if handled is not None:
                 return handled
+        detail = reports.parse_detail_request(text, today)
+        if detail is not None:  # rincian umum: dihitung langsung dari data, tanpa AI
+            start, end, title = detail
+            return reports.summary(self.db, chat_id, start, end, f"Rincian pengeluaran {title}", top=8)
         if self.llm and is_question(text):
             return self.ask_command(chat_id, text)
         income = parse_income(text, today)

@@ -178,9 +178,21 @@ _QUESTION_START = re.compile(
 )
 
 
+# Permintaan ("jelaskan detail pengeluaranku"). Kelompok kedua bisa juga awal sebuah catatan
+# ("cek kesehatan 200rb"), jadi hanya dianggap permintaan bila kalimatnya tanpa nominal.
+_REQUEST_START = re.compile(
+    r"^\s*(?:tolong\s+|coba\s+|boleh\s+)?(?:jelaskan|jelasin|ceritakan|ceritain|rincikan|rinci|rangkum|"
+    r"ringkas|analisis|analisa|sebutkan|sebutin)\b", re.I)
+_SOFT_REQUEST_START = re.compile(
+    r"^\s*(?:tolong\s+|coba\s+|boleh\s+)?(?:lihat|liat|cek|hitung|kasih\s+(?:tahu|tau)|beri\s+tahu|"
+    r"detail|rincian|laporan)\b", re.I)
+
+
 def is_question(text: str) -> bool:
-    """Pertanyaan tentang data. Kalimat bernominal berakhiran '?' tetap dianggap catatan."""
-    if _QUESTION_START.match(text):
+    """Pertanyaan/permintaan tentang data. Kalimat bernominal berakhiran '?' tetap dianggap catatan."""
+    if _QUESTION_START.match(text) or _REQUEST_START.match(text):
+        return True
+    if _SOFT_REQUEST_START.match(text) and find_amount(text) is None:
         return True
     return text.rstrip().endswith("?") and find_amount(text) is None
 

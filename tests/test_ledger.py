@@ -50,6 +50,10 @@ def test_parse_date_text(text, expected):
     ("berapa pengeluaran kopi bulan ini?", True), ("bulan apa paling boros", True),
     ("boros nggak ya?", True), ("kopi 35rb", False), ("makan siang 35rb?", False),
     ("apalah 35rb", False),
+    ("jelaskan detail pengeluaranku selama ini", True), ("tolong rangkum bulan ini", True),
+    ("ceritakan pengeluaranku", True), ("lihat pengeluaran terbesar", True), ("cek saldo", True),
+    ("detail pengeluaran kopi", True), ("cek kesehatan 200rb", False), ("lihat film 50rb", False),
+    ("hitung ulang 35rb", False), ("analisisnya 35rb", False),
 ])
 def test_is_question(text, expected):
     assert is_question(text) is expected

@@ -133,6 +133,8 @@ async def on_photo(update: Update, context: Ctx) -> None:
     if photo.file_size and photo.file_size > MAX_PHOTO_BYTES:
         await _reply(update, "Fotonya terlalu besar. Kirim foto yang lebih kecil atau ketik manual.")
         return
+    if svc.llm:  # pembacaan struk oleh model lokal bisa 1-2 menit: beri tanda bot tidak diam
+        await _reply(update, "🧾 Membaca struk… bisa 1–2 menit, tunggu ya.")
     await update.effective_chat.send_action(ChatAction.TYPING)
     file = await photo.get_file()
     data = bytes(await file.download_as_bytearray())
