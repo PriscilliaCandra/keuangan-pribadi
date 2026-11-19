@@ -10,7 +10,7 @@
 <body>
   <div class="page">
     <header class="top">
-      <h1>Keuangan Pribadi</h1>
+      <div class="brand"><span class="brand-mark" aria-hidden="true">Rp</span><h1>Keuangan Pribadi</h1></div>
       <div class="filters" role="group" aria-label="Periode">
         <div id="periods" class="seg"></div>
         <button id="theme" class="icon-btn" type="button" aria-label="Ganti tema terang/gelap">◐</button>
@@ -26,10 +26,11 @@
           <div class="label" id="hero-label">Selisih</div>
           <div class="hero-value" id="hero-value">–</div>
           <div class="delta" id="hero-sub"></div>
+          <div class="hero-meter" id="hero-meter" hidden></div>
         </div>
-        <div class="tile"><div class="label">Pemasukan</div><div class="value" id="kpi-income">–</div><div class="delta" id="kpi-income-d"></div></div>
-        <div class="tile"><div class="label">Pengeluaran</div><div class="value" id="kpi-expense">–</div><div class="delta" id="kpi-expense-d"></div></div>
-        <div class="tile"><div class="label">Ditabung</div><div class="value" id="kpi-rate">–</div><div class="delta" id="kpi-count"></div></div>
+        <div class="tile t-income"><div class="label">Pemasukan</div><div class="value" id="kpi-income">–</div><div class="delta" id="kpi-income-d"></div></div>
+        <div class="tile t-expense"><div class="label">Pengeluaran</div><div class="value" id="kpi-expense">–</div><div class="delta" id="kpi-expense-d"></div></div>
+        <div class="tile t-save"><div class="label">Ditabung</div><div class="value" id="kpi-rate">–</div><div class="delta" id="kpi-count"></div></div>
       </section>
 
       <section class="card" aria-labelledby="t-add">
@@ -67,7 +68,10 @@
             <span><i class="key income"></i>Pemasukan</span>
             <span><i class="key expense"></i>Pengeluaran</span>
           </div>
-          <button id="toggle-table" class="link-btn" type="button" aria-pressed="false">Lihat sebagai tabel</button>
+          <div class="chart-tools">
+            <button id="toggle-scale" class="link-btn" type="button" aria-pressed="false" title="Skala mengikuti pengeluaran agar batang kecil terlihat">Fokus pengeluaran</button>
+            <button id="toggle-table" class="link-btn" type="button" aria-pressed="false">Lihat sebagai tabel</button>
+          </div>
         </div>
         <div id="series-chart" class="chart"></div>
         <div id="series-table" class="table-wrap" hidden></div>

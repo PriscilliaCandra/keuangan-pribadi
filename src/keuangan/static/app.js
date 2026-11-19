@@ -4,7 +4,7 @@
   const BULAN = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"];
   const $ = (sel) => document.querySelector(sel);
   const nf = new Intl.NumberFormat("id-ID");
-  const state = { period: "bulan_ini", kind: "semua", category: "", q: "", offset: 0, limit: 12, data: null, total: 0 };
+  const state = { period: "bulan_ini", kind: "semua", category: "", q: "", offset: 0, limit: 12, data: null, total: 0, focus: false };
 
   // ---------- util ----------
   const rp = (n) => (n < 0 ? "−" : "") + "Rp" + nf.format(Math.abs(Math.round(n)));
@@ -78,6 +78,18 @@
     const k = d.kpi;
     $("#hero-label").textContent = `Selisih · ${d.label} (${fmtDate(d.from)} – ${fmtDate(d.to)})`;
     $("#hero-value").textContent = rp(k.net);
+    $("#hero-value").classList.toggle("neg", k.net < 0);
+    const meter = $("#hero-meter");
+    if (k.income > 0) {
+      const used = Math.round(k.expense * 100 / k.income);
+      const fill = h("span", { class: `fill${used > 100 ? " over" : ""}` });
+      fill.style.width = `${Math.min(100, used)}%`;
+      meter.replaceChildren(
+        h("div", { class: "row" }, h("span", { text: "Terpakai dari pemasukan" }), h("strong", { text: `${used}%` })),
+        h("div", { class: "track", role: "progressbar", "aria-valuemin": "0", "aria-valuemax": "100",
+          "aria-valuenow": String(Math.min(100, used)), "aria-label": `Pengeluaran ${used}% dari pemasukan` }, fill));
+      meter.hidden = false;
+    } else { meter.hidden = true; }
     $("#hero-sub").replaceChildren(h("span", {
       class: k.net >= 0 ? "up-good" : "down-bad",
       text: k.net >= 0 ? "▲ Surplus: pemasukan lebih besar" : "▼ Defisit: pengeluaran lebih besar" }));
@@ -112,8 +124,10 @@
       return;
     }
     const W = Math.max(320, host.clientWidth || 640), H = 280;
-    const m = { l: 54, r: 8, t: 8, b: 30 }, pw = W - m.l - m.r, ph = H - m.t - m.b;
-    const { top, ticks } = niceScale(Math.max(1, ...pts.flatMap((p) => [p.income, p.expense])), 4);
+    const m = { l: 54, r: 8, t: 20, b: 30 }, pw = W - m.l - m.r, ph = H - m.t - m.b;
+    const maxExpense = Math.max(0, ...pts.map((p) => p.expense));
+    const focus = state.focus && maxExpense > 0;  // skala mengikuti pengeluaran; pemasukan besar dipotong + diberi label
+    const { top, ticks } = niceScale(Math.max(1, ...(focus ? [maxExpense] : pts.flatMap((p) => [p.income, p.expense]))), 4);
     const y = (v) => m.t + ph - (v / top) * ph;
     const svg = sv("svg", { viewBox: `0 0 ${W} ${H}`, role: "group",
       "aria-label": `Grafik kolom pemasukan dan pengeluaran, ${d.label}. Data lengkap ada di tampilan tabel.` });
@@ -131,7 +145,15 @@
       const label = `${p.label}: pemasukan ${rp(p.income)}, pengeluaran ${rp(p.expense)}`;
       const g = sv("g", { class: "slot", tabindex: "0", role: "img", "aria-label": label });
       g.append(sv("rect", { class: "hit", x: m.l + slot * i, y: m.t, width: slot, height: ph }));
-      const bar = (v, x, cls) => v > 0 && g.append(sv("path", { class: `bar ${cls}`, d: topRounded(x, y(v), thick, y(0) - y(v), 4) }));
+      const bar = (v, x, cls) => {
+        if (!(v > 0)) return;
+        const shown = Math.min(v, top);
+        g.append(sv("path", { class: `bar ${cls}`, d: topRounded(x, y(shown), thick, y(0) - y(shown), 4) }));
+        if (v > top) {  // dipotong: tandai agar tidak menyesatkan
+          g.classList.add("clipped");
+          g.append(sv("text", { class: "cap", x: x + thick / 2, y: m.t - 6, "text-anchor": "middle", text: `▲${compact(v)}` }));
+        }
+      };
       bar(p.income, cx - thick - 1, "income");  // celah 2px antar-kolom
       bar(p.expense, cx + 1, "expense");
       const rows = [{ cls: "income", name: "Pemasukan", value: rp(p.income) },
@@ -237,7 +259,8 @@
 
   function renderInsights(d) {
     const host = $("#insights");
-    host.replaceChildren(...d.insights.map((t) => h("p", { class: "insight", text: t })));
+    const kind = (t) => /^(📈|🆕|⚠️|🔮)/u.test(t) ? "warn" : /^👏/u.test(t) ? "good" : "info";
+    host.replaceChildren(...d.insights.map((t) => h("p", { class: `insight ${kind(t)}`, text: t })));
     $("#insight-card").hidden = !d.insights.length;
   }
 
@@ -376,9 +399,9 @@
       if (!r.rows.length) body.append(h("tr", {}, h("td", { colspan: "5", class: "empty", text: "Tidak ada transaksi yang cocok." })));
       for (const t of r.rows) {
         body.append(h("tr", {},
-          h("td", { text: fmtDate(t.date, true) }),
+          h("td", {}, document.createTextNode(fmtDate(t.date)), h("span", { class: "yr", text: ` ${t.date.slice(0, 4)}` })),
           h("td", { class: "note" }, h("i", { class: `dot ${t.kind === "masuk" ? "income" : "expense"}`, "aria-hidden": "true" }),
-            document.createTextNode(t.note)),
+            document.createTextNode(t.note), h("span", { class: "cat-m", text: t.category })),
           h("td", { text: t.category }),
           h("td", { class: "num", text: (t.kind === "masuk" ? "+" : "") + rp(t.amount),
             "aria-label": `${t.kind === "masuk" ? "pemasukan" : "pengeluaran"} ${rp(t.amount)}` }),
@@ -443,6 +466,12 @@
   $("#f-q").addEventListener("input", (e) => { clearTimeout(timer); timer = setTimeout(() => { state.q = e.target.value; state.offset = 0; loadTransactions(); }, 250); });
   $("#prev").addEventListener("click", () => { state.offset = Math.max(0, state.offset - state.limit); loadTransactions(); });
   $("#next").addEventListener("click", () => { state.offset += state.limit; loadTransactions(); });
+  $("#toggle-scale").addEventListener("click", (e) => {
+    state.focus = !state.focus;
+    e.target.setAttribute("aria-pressed", String(state.focus));
+    e.target.textContent = state.focus ? "Tampilkan semua skala" : "Fokus pengeluaran";
+    if (state.data) renderSeries(state.data);
+  });
   $("#toggle-table").addEventListener("click", (e) => {
     const showTable = $("#series-table").hidden;
     $("#series-table").hidden = !showTable;
